@@ -282,16 +282,17 @@ class CKANHarvester(HarvesterBase):
 
         # If configuration contains a list of organizations we want to restrict
         # the harvester to, then check this dataset is in one of those orgs.
-        org_name = dataset.get('organization', {}).get('name', '')
-        if org_name:
-            if self.organizations_include:
-                if not org_name in self.organizations_include:
-                    log.debug('Skipping dataset %s as organization %s not in organizations_filter_include' % (dataset['name'], org_name,))
-                    return 'unchanged'
-            if self.organizations_exclude:
-                if org_name in self.organizations_exclude:
-                    log.debug('Skipping dataset %s as organisation %s is in organizations_filter_exclude' % (dataset['name'], org_name,))
-                    return 'unchanged'
+        if 'organization' in dataset:
+            org_name = dataset['organization'].get('name', '')
+            if org_name:
+                if self.organizations_include:
+                    if not org_name in self.organizations_include:
+                        log.debug('Skipping dataset %s as organization %s not in organizations_filter_include' % (dataset['name'], org_name,))
+                        return 'unchanged'
+                if self.organizations_exclude:
+                    if org_name in self.organizations_exclude:
+                        log.debug('Skipping dataset %s as organisation %s is in organizations_filter_exclude' % (dataset['name'], org_name,))
+                        return 'unchanged'
 
         # Skip datasets that are flagged dgu_harvest_me=false
         ignore_dataset = False
