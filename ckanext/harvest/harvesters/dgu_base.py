@@ -109,8 +109,10 @@ class DguHarvesterBase(HarvesterBase):
 
         # Set defaults for the package_dict, mainly from the source_config
         package_dict_defaults = PackageDictDefaults()
-        package_dict_defaults['id'] = harvest_object.package_id or unicode(uuid.uuid4())
-        existing_dataset = model.Package.get(harvest_object.package_id)
+        package_id = previous_object.package_id if previous_object else None
+        package_dict_defaults['id'] = package_id or unicode(uuid.uuid4())
+        existing_dataset = model.Package.get(package_id)
+
         if existing_dataset:
             package_dict_defaults['name'] = existing_dataset.name
         if source_config.get('remote_orgs') not in ('only_local', 'create'):
@@ -240,7 +242,7 @@ class DguHarvesterBase(HarvesterBase):
                 return False
         elif status == 'changed':
             package_schema = logic.schema.default_update_package_schema()
-            package_dict['id'] = harvest_object.package_id
+            package_dict['id'] = package_id
             log.debug('package_update: %r', package_dict)
             try:
                 package_dict_updated = tk.get_action('package_update')(context, package_dict)
