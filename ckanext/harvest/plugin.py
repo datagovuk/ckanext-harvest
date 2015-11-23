@@ -41,17 +41,14 @@ class Harvest(p.SingletonPlugin):
         return map
 
     def update_config(self, config):
-        here = os.path.dirname(__file__)
-        template_dir = os.path.join(here, 'templates')
-        public_dir = os.path.join(here, 'public')
-        if config.get('extra_template_paths'):
-            config['extra_template_paths'] += ',' + template_dir
-        else:
-            config['extra_template_paths'] = template_dir
-        if config.get('extra_public_paths'):
-            config['extra_public_paths'] += ',' + public_dir
-        else:
-            config['extra_public_paths'] = public_dir
+        # check if new templates
+        templates = 'templates'
+        # DGU Hack - stick to genshi for now
+        #if p.toolkit.check_ckan_version(min_version='2.0'):
+        #    if not p.toolkit.asbool(config.get('ckan.legacy_templates', False)):
+        #        templates = 'templates_new'
+        p.toolkit.add_template_directory(config, templates)
+        p.toolkit.add_public_directory(config, 'public')
 
     ## IActions
 
