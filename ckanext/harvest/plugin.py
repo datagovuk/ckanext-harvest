@@ -81,18 +81,29 @@ class Harvest(p.SingletonPlugin):
                 'harvest_source_extra_fields': harvest_helpers.harvest_source_extra_fields,
                 }
 
-def _get_logic_functions(module_root, logic_functions={}):
 
-    for module_name in ['get', 'create', 'update', 'delete']:
-        module_path = '%s.%s' % (module_root, module_name,)
-        module = __import__(module_path)
+_logic_functions = {}
 
-        for part in module_path.split('.')[1:]:
-            module = getattr(module, part)
 
-        for key, value in module.__dict__.items():
-            if not key.startswith('_') and  (hasattr(value, '__call__')
+def _get_logic_functions(module_root):
+    global _logic_functions
+    if module_root not in _logic_functions:
+        # cache the logic functions found during importing the logic files,
+        # because you can only import each file once, and when you run tests,
+        # get_actions() gets called lots of times due to lots of plugin
+        # load/unloads during start-up.
+        _logic_functions[module_root] = {}
+
+        for module_name in ['get', 'create', 'update', 'delete']:
+            module_path = '%s.%s' % (module_root, module_name,)
+            module = __import__(module_path)
+
+            for part in module_path.split('.')[1:]:
+                module = getattr(module, part)
+
+            for key, value in module.__dict__.items():
+                if not key.startswith('_') and (hasattr(value, '__call__')
                         and (value.__module__ == module_path)):
-                logic_functions[key] = value
+                    _logic_functions[module_root][key] = value
 
-    return logic_functions
+    return _logic_functions[module_root]

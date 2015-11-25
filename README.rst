@@ -2,8 +2,17 @@
 ckanext-harvest - Remote harvesting extension
 =============================================
 
+.. image:: https://travis-ci.org/datagovuk/ckanext-harvest.svg?branch=2.0
+    :target: https://travis-ci.org/datagovuk/ckanext-harvest
+
 This extension provides a common harvesting framework for ckan extensions
 and adds a CLI and a WUI to CKAN to manage harvesting sources and jobs.
+
+**DGU fork** This fork deviates form mainline in the following ways:
+
+* HarvestSource is not stored in SOLR as a Package - would probably need to filter these out of lots of places in DGU to do this. Also I'm not convinced it is a good direction, since it is not a Package/Dataset, so needs another name.
+* still using carrot instead of pika - still to check it works on rabbitmq
+* harvest source requires a publisher_id
 
 Installation
 ============
@@ -35,13 +44,11 @@ Run the following command to create the necessary tables in the database::
 
     paster --plugin=ckanext-harvest harvester initdb --config=mysite.ini
 
-The extension needs a user with sysadmin privileges to perform the
-harvesting jobs. You can create such a user running this command::
+Finally, restart CKAN to have the changes take affect:
 
-    paster --plugin=ckan sysadmin add harvest
+    sudo service apache2 restart
 
-After installation, the harvest interface should be available under /harvest
-if you're logged in with sysadmin permissions, eg.
+After installation, the harvest source listing should be available under /harvest, eg:
 
 	http://localhost:5000/harvest
 
