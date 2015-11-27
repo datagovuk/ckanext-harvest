@@ -85,12 +85,15 @@ class HarvestObject(factory.Factory):
         if 'job_id' not in kwargs:
             kwargs['job_id'] = kwargs['job'].id
             kwargs['source_id'] = kwargs['job'].source.id
-        job_dict = toolkit.get_action('harvest_object_create')(
+        # Pop 'job' to avoid it getting added as a HarvestObjectExtra
+        if 'job' in kwargs:
+            kwargs.pop('job')
+        obj_dict = toolkit.get_action('harvest_object_create')(
             context, kwargs)
         if cls._return_type == 'dict':
-            return job_dict
+            return obj_dict
         else:
-            return cls.FACTORY_FOR.get(job_dict['id'])
+            return cls.FACTORY_FOR.get(obj_dict['id'])
 
 
 class HarvestObjectObj(HarvestObject):

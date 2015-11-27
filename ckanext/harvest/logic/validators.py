@@ -25,12 +25,13 @@ def harvest_source_id_exists(value, context):
     return value
 
 def harvest_job_exists(value, context):
-    '''Check if a harvest job exists and returns the model if it does'''
+    '''Check if a harvest job exists'''
     result = HarvestJob.get(value)
 
     if not result:
         raise Invalid('Harvest Job with id %r does not exist.' % str(value))
-    return result
+    # DGU Hack - return the id not the object - see hack in harvest_object_create
+    return value
 
 def _normalize_url(url):
     '''Strips off parameters off a URL, and an unnecessary port number, so that

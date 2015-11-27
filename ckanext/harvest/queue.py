@@ -327,9 +327,9 @@ def fetch_and_import_stages(harvester, obj):
         obj.report_status = 'deleted'
     elif obj.current == False:
         # decided not to continue with the import after all
-        obj.report_status = 'unchanged'
+        obj.report_status = 'not modified'
     elif len(model.Session.query(HarvestObject)
-        .filter_by(package_id = obj.package_id)
+        .filter_by(package_id=obj.package_id)
         .limit(2)
         .all()) == 2:
         obj.report_status = 'updated'

@@ -102,10 +102,6 @@ def setup():
         #    migrate_v3_create_datasets(sources_to_migrate)
 
 
-class HarvestError(Exception):
-    pass
-
-
 class HarvestDomainObject(DomainObject):
     '''Convenience methods for searching objects
     '''
@@ -161,7 +157,8 @@ class HarvestJob(HarvestDomainObject):
     '''
     def __repr__(self):
         return '<HarvestJob id=%s source_id=%s status=%s created=%r>' % \
-               (self.id, self.source_id, self.status, self.created.strftime('%Y-%m-%d %H:%M'))
+               (self.id, self.source_id, self.status,
+                self.created.strftime('%Y-%m-%d %H:%M') if self.created else None)
 
     def __str__(self):
         return self.__repr__().encode('ascii', 'ignore')
@@ -171,12 +168,16 @@ class HarvestJob(HarvestDomainObject):
         e.g. returns:
         {'errored': 4, 'deleted': 2, 'not modified': 5, 'updated': 3, 'added': 6}
         '''
+        stats_out = {'added': 0, 'updated': 0, 'not modified': 0,
+                     'errored': 0, 'deleted': 0}
         stats = model.Session.query(
             HarvestObject.report_status,
             func.count(HarvestObject.id).label('total_objects'))\
                 .filter_by(harvest_job_id=self.id)\
                 .group_by(HarvestObject.report_status).all()
-        return dict((status, count) for status, count in stats)
+        for status, count in stats:
+            stats_out[status] = count
+        return stats_out
 
 
 class HarvestObject(HarvestDomainObject):
@@ -521,7 +522,9 @@ def define_harvester_tables():
         },
     )
 
-    event.listen(HarvestObject, 'before_insert', harvest_object_before_insert_listener)
+    # DGU Hack - we don't need this and it causes trouble with our hack to
+    # harvest_object_craete's setting of the job
+    #event.listen(HarvestObject, 'before_insert', harvest_object_before_insert_listener)
 
 def migrate_v2():
     log.debug('Migrating harvest tables to v2. This may take a while...')

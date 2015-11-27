@@ -13,6 +13,10 @@ and adds a CLI and a WUI to CKAN to manage harvesting sources and jobs.
 * HarvestSource is not stored in SOLR as a Package - would probably need to filter these out of lots of places in DGU to do this. Also I'm not convinced it is a good direction, since it is not a Package/Dataset, so needs another name.
 * still using carrot instead of pika - still to check it works on rabbitmq
 * harvest source requires a publisher_id
+* CKANHarvester uses the DguHarvestBase to add theme etc. - need to resolve whether this is good direction for mainline to go down.
+* get_object_report_statuses is factored out so that it can be added to debug.
+* gathered content is not re-encoded as UTF8.
+* deleted objects are signified by status=deleted being set (in the gather stage usually), rather than by import_stage returning True but current=False (which seems flimsy)
 
 Installation
 ============

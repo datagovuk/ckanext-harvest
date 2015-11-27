@@ -2,6 +2,7 @@ from ckanext.harvest.tests.factories import HarvestSourceObj, HarvestJobObj
 import ckanext.harvest.model as harvest_model
 from ckanext.harvest import queue
 from ckan.plugins import toolkit
+from ckan import model
 
 
 def run_harvest(url, harvester, config=''):
@@ -14,7 +15,8 @@ def run_harvest(url, harvester, config=''):
 
     # User triggers a harvest, which is the creation of a harvest job.
     # We set run=False so that it doesn't put it on the gather queue.
-    job = HarvestJobObj(source=source, run=False)
+    job = HarvestJobObj(source_id=source.id, run=False)
+    print 'JOB', hex(id(job)), job.id
 
     return run_harvest_job(job, harvester)
 
@@ -24,7 +26,7 @@ def run_harvest_job(job, harvester):
     # which would do 2 things to 'run' the job:
     # 1. change the job status to Running
     job.status = 'Running'
-    job.save()
+    model.Session.commit()
     # 2. put the job on the gather queue which is consumed by
     # queue.gather_callback, which determines the harvester and then calls
     # gather_stage. We simply call the gather_stage.
