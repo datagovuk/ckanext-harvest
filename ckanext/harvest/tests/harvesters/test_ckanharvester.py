@@ -47,7 +47,7 @@ class TestCkanHarvester(object):
         source = HarvestSourceObj(url='http://localhost:%s/' % mock_ckan.PORT)
         job = HarvestJobObj(source=source)
         harvest_object = HarvestObjectObj(guid=mock_ckan.DATASETS[0]['id'],
-                                          job_id=job.id)
+                                          job_id=job.id, source_id=source.id)
 
         harvester = CKANHarvester()
         result = harvester.fetch_stage(harvest_object)
@@ -67,7 +67,7 @@ class TestCkanHarvester(object):
             guid=mock_ckan.DATASETS[0]['id'],
             content=json.dumps(mock_ckan.convert_dataset_to_restful_form(
                                mock_ckan.DATASETS[0])),
-            job_id=job.id)
+            job_id=job.id, source_id=source.id)
 
         harvester = CKANHarvester()
         result = harvester.import_stage(harvest_object)

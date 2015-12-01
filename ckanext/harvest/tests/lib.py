@@ -16,7 +16,6 @@ def run_harvest(url, harvester, config=''):
     # User triggers a harvest, which is the creation of a harvest job.
     # We set run=False so that it doesn't put it on the gather queue.
     job = HarvestJobObj(source_id=source.id, run=False)
-    print 'JOB', hex(id(job)), job.id
 
     return run_harvest_job(job, harvester)
 

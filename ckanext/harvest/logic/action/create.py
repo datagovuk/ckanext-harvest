@@ -192,7 +192,7 @@ def harvest_object_create(context, data_dict):
     obj = HarvestObject(
         guid=data.get('guid'),
         content=data.get('content'),
-        job_id=data['job_id'],
+        harvest_job_id=data['job_id'],
         harvest_source_id=data.get('source_id'),
         package_id=data.get('package_id'),
         extras=[HarvestObjectExtra(key=k, value=v)

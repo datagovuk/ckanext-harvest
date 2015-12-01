@@ -319,12 +319,13 @@ class HarvestCoupledResource(HarvestDomainObject):
         return Session.query(HarvestCoupledResource) \
                .filter_by(dataset_record=dataset_record_package)
 
-def harvest_object_before_insert_listener(mapper,connection,target):
+
+def harvest_object_before_insert_listener(mapper, connection, target):
     '''
         For compatibility with old harvesters, check if the source id has
         been set, and set it automatically from the job if not.
     '''
-    if not target.harvest_source_id or not target.source:
+    if not (target.harvest_source_id or target.source):
         if not target.job:
             raise Exception('You must define a Harvest Job for each Harvest Object')
         target.source = target.job.source
@@ -522,9 +523,7 @@ def define_harvester_tables():
         },
     )
 
-    # DGU Hack - we don't need this and it causes trouble with our hack to
-    # harvest_object_craete's setting of the job
-    #event.listen(HarvestObject, 'before_insert', harvest_object_before_insert_listener)
+    event.listen(HarvestObject, 'before_insert', harvest_object_before_insert_listener)
 
 def migrate_v2():
     log.debug('Migrating harvest tables to v2. This may take a while...')

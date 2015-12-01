@@ -410,6 +410,7 @@ class TestHarvestObject(unittest.TestCase):
             'guid': 'guid',
             'content': 'content',
             'job_id': job.id,
+            'source_id': job.source.id,
             'extras': {'a key': 'a value'},
         }
         harvest_object = toolkit.get_action('harvest_object_create')(

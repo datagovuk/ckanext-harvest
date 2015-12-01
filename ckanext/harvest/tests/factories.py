@@ -74,7 +74,8 @@ class HarvestObject(factory.Factory):
     _return_type = 'dict'
 
     #source = factory.SubFactory(HarvestSourceObj)
-    job = factory.SubFactory(HarvestJobObj)
+    # DGU Hack - problems with DetachedInstance creating job like this
+    #job = factory.SubFactory(HarvestJobObj)
     extras = {'status': 'new_or_changed'}  # needed for DGU
 
     @classmethod
@@ -85,7 +86,7 @@ class HarvestObject(factory.Factory):
         if 'job_id' not in kwargs:
             kwargs['job_id'] = kwargs['job'].id
             kwargs['source_id'] = kwargs['job'].source.id
-        # Pop 'job' to avoid it getting added as a HarvestObjectExtra
+        # Remove 'job' to avoid it getting added as a HarvestObjectExtra
         if 'job' in kwargs:
             kwargs.pop('job')
         obj_dict = toolkit.get_action('harvest_object_create')(

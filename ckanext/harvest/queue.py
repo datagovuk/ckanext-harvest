@@ -278,7 +278,7 @@ def fetch_and_import_stages(harvester, obj):
         HarvestObjectError.create(
             message=msg, object=obj, stage='Fetch', line=None)
         log.error('Fetch exception %s obj=%s guid=%s source=%s',
-                    e, obj.id, obj.guid, obj.source.id)
+                  e, obj.id, obj.guid, obj.source.id)
         log.exception(e)
         success_fetch = False
     finally:
