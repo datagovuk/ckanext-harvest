@@ -488,9 +488,14 @@ def harvest_job_abort(context, data_dict):
     Aborts a harvest job. Given a harvest source_id, it looks for the latest
     one and (assuming it not already Finished) marks it as Finished. It also
     marks any of that source's harvest objects and (if not complete or error)
-    marks them "ABORTED", so any left in limbo are cleaned up. Does not actually
-    stop running any queued harvest fetchs/objects.
+    marks them "ABORTED", so any left in limbo are cleaned up. Does not
+    actually stop running any queued harvest fetchs/objects.
 
+    Specify either id or source_id.
+
+    :param id: the job id to abort, or the id or name of the harvest source
+               with a job to abort
+    :type id: string
     :param source_id: the name or id of the harvest source with a job to abort
     :type source_id: string
     '''
@@ -499,18 +504,25 @@ def harvest_job_abort(context, data_dict):
 
     model = context['model']
 
-    source_id = data_dict.get('source_id', None)
-    source = harvest_source_show(context, {'id': source_id})
-
-    # HarvestJob set status to 'Aborted'
-    # Don not use harvest_job_list since it can use a lot of memory
-    last_job = model.Session.query(HarvestJob) \
-                    .filter_by(source_id=source['id']) \
-                    .order_by(HarvestJob.created.desc()).first()
-    if not last_job:
-        raise NotFound('Error: source has no jobs')
-    job = get_action('harvest_job_show')(context,
-                                         {'id': last_job.id})
+    source_or_job_id = data_dict.get('source_id') or data_dict.get('id')
+    if source_or_job_id:
+        try:
+            source = harvest_source_show(context, {'id': source_or_job_id})
+        except NotFound:
+            job = get_action('harvest_job_show')(
+                context, {'id': source_or_job_id})
+        else:
+            # HarvestJob set status to 'Aborted'
+            # Do not use harvest_job_list since it can use a lot of memory
+            # Get the most recent job for the source
+            job = model.Session.query(HarvestJob) \
+                       .filter_by(source_id=source['id']) \
+                       .order_by(HarvestJob.created.desc()).first()
+            if not job:
+                raise NotFound('Error: source has no jobs')
+            job_id = job.id
+            job = get_action('harvest_job_show')(
+                context, {'id': job_id})
 
     if job['status'] not in ('Finished', 'Aborted'):
         # i.e. New or Running
