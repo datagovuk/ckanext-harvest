@@ -1,4 +1,3 @@
-import os
 from logging import getLogger
 
 import ckan.plugins as p
@@ -7,6 +6,7 @@ from ckanext.harvest.model import setup as model_setup
 
 log = getLogger(__name__)
 assert not log.disabled
+
 
 class Harvest(p.SingletonPlugin):
 
@@ -33,8 +33,8 @@ class Harvest(p.SingletonPlugin):
         map.connect('harvest_delete', '/harvest/delete/:id',controller=controller, action='delete')
         map.connect('harvest_source', '/harvest/:id', controller=controller, action='read')
 
-        map.connect('harvesting_job_create', '/harvest/refresh/:id',controller=controller,
-                action='create_harvesting_job')
+        map.connect('harvesting_job_create', '/harvest/refresh/:id', controller=controller,
+                    action='refresh')
 
         map.connect('harvest_object_show', '/harvest/object/:id', controller=controller, action='show_object')
 
