@@ -7,10 +7,6 @@ from ckanext.harvest.model import HarvestJob, HarvestObject
 log = logging.getLogger(__name__)
 
 
-class HarvestError(Exception):
-    pass
-
-
 def pager_url(ignore=None, page=None):
     # This has params the same as ckan.controllers.Package.pager_url NOT
     # ckan.helpers.pager_url

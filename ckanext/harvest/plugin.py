@@ -1,4 +1,3 @@
-import os
 from logging import getLogger
 
 import ckan.plugins as p
@@ -7,6 +6,7 @@ from ckanext.harvest.model import setup as model_setup
 
 log = getLogger(__name__)
 assert not log.disabled
+
 
 class Harvest(p.SingletonPlugin):
 
@@ -33,25 +33,22 @@ class Harvest(p.SingletonPlugin):
         map.connect('harvest_delete', '/harvest/delete/:id',controller=controller, action='delete')
         map.connect('harvest_source', '/harvest/:id', controller=controller, action='read')
 
-        map.connect('harvesting_job_create', '/harvest/refresh/:id',controller=controller,
-                action='create_harvesting_job')
+        map.connect('harvesting_job_create', '/harvest/refresh/:id', controller=controller,
+                    action='refresh')
 
         map.connect('harvest_object_show', '/harvest/object/:id', controller=controller, action='show_object')
 
         return map
 
     def update_config(self, config):
-        here = os.path.dirname(__file__)
-        template_dir = os.path.join(here, 'templates')
-        public_dir = os.path.join(here, 'public')
-        if config.get('extra_template_paths'):
-            config['extra_template_paths'] += ',' + template_dir
-        else:
-            config['extra_template_paths'] = template_dir
-        if config.get('extra_public_paths'):
-            config['extra_public_paths'] += ',' + public_dir
-        else:
-            config['extra_public_paths'] = public_dir
+        # check if new templates
+        templates = 'templates'
+        # DGU Hack - stick to genshi for now
+        #if p.toolkit.check_ckan_version(min_version='2.0'):
+        #    if not p.toolkit.asbool(config.get('ckan.legacy_templates', False)):
+        #        templates = 'templates_new'
+        p.toolkit.add_template_directory(config, templates)
+        p.toolkit.add_public_directory(config, 'public')
 
     ## IActions
 
@@ -84,18 +81,29 @@ class Harvest(p.SingletonPlugin):
                 'harvest_source_extra_fields': harvest_helpers.harvest_source_extra_fields,
                 }
 
-def _get_logic_functions(module_root, logic_functions={}):
 
-    for module_name in ['get', 'create', 'update', 'delete']:
-        module_path = '%s.%s' % (module_root, module_name,)
-        module = __import__(module_path)
+_logic_functions = {}
 
-        for part in module_path.split('.')[1:]:
-            module = getattr(module, part)
 
-        for key, value in module.__dict__.items():
-            if not key.startswith('_') and  (hasattr(value, '__call__')
+def _get_logic_functions(module_root):
+    global _logic_functions
+    if module_root not in _logic_functions:
+        # cache the logic functions found during importing the logic files,
+        # because you can only import each file once, and when you run tests,
+        # get_actions() gets called lots of times due to lots of plugin
+        # load/unloads during start-up.
+        _logic_functions[module_root] = {}
+
+        for module_name in ['get', 'create', 'update', 'delete']:
+            module_path = '%s.%s' % (module_root, module_name,)
+            module = __import__(module_path)
+
+            for part in module_path.split('.')[1:]:
+                module = getattr(module, part)
+
+            for key, value in module.__dict__.items():
+                if not key.startswith('_') and (hasattr(value, '__call__')
                         and (value.__module__ == module_path)):
-                logic_functions[key] = value
+                    _logic_functions[module_root][key] = value
 
-    return logic_functions
+    return _logic_functions[module_root]

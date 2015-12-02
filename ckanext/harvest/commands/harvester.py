@@ -1,11 +1,11 @@
 import sys
-import re
 from pprint import pprint
 
 from ckan import model
 from ckan.logic import get_action, ValidationError
 
 from ckan.lib.cli import CkanCommand
+
 
 class Harvester(CkanCommand):
     '''Harvests remotely mastered metadata
@@ -18,24 +18,44 @@ class Harvester(CkanCommand):
       harvester source {url} {type} [{active}] [{user-id}] [{publisher-id}]
         - create new harvest source
 
-      harvester clearsource {id}
-        - clears all datasets, jobs and objects related to a harvest source, but keeps the source itself
+      harvester source {source-id/name}
+        - shows a harvest source
 
       harvester rmsource {id}
-        - remove (inactivate) a harvester source
+        - remove (deactivate) a harvester source, whilst leaving any related
+          datasets, jobs and objects
+
+      harvester clearsource {id}
+        - clears all datasets, jobs and objects related to a harvest source,
+          but keeps the source itself
 
       harvester sources [all]
         - lists harvest sources
           If 'all' is defined, it also shows the Inactive sources
 
       harvester job {source-id}
-        - create new harvest job
+        - create new harvest job and runs it (puts it on the gather queue)
 
       harvester jobs
         - lists harvest jobs
 
+      harvester job_abort {source-id/source-name/obj-id}
+        - marks a job as "Aborted" so that the source can be restarted afresh.
+          It ensures that the job's harvest objects status are also marked
+          finished. You should ensure that neither the job nor its objects are
+          currently in the gather/fetch queues.
+
       harvester run
-        - runs harvest jobs
+        - starts any harvest jobs that have been created by putting them onto
+          the gather queue. Also checks running jobs - if finished it
+          changes their status to Finished.
+
+      harvester run_test {source-id/name}
+        - runs a harvest - for testing only.
+          This does all the stages of the harvest (creates job, gather, fetch,
+          import) without involving the web UI or the queue backends. This is
+          useful for testing a harvester without having to fire up
+          gather/fetch_consumer processes, as is done in production.
 
       harvester gather_consumer
         - starts the consumer for the gathering queue
@@ -43,30 +63,25 @@ class Harvester(CkanCommand):
       harvester fetch_consumer
         - starts the consumer for the fetching queue
 
-      harvester [-j] [--segments={segments}] import [source_id {source-id} | harvest_object_id {object-id} | guid {GUID}]
-        - perform the import stage with the last fetched objects, optionally belonging to a certain source
-          or object.
-          Please note that no objects will be fetched from the remote server. It will only affect
-          the last fetched objects already present in the database.
+      harvester [-j] [-o] [--segments={segments}] import [{source-id}]
+        - perform the import stage with the last fetched objects, for a certain
+          source or a single harvest object. Please note that no objects will
+          be fetched from the remote server. It will only affect the objects
+          already present in the database.
 
-          If the -j flag is provided, the objects are not joined to existing datasets. This may be useful
-          when importing objects for the first time.
+          To import a particular harvest source, specify its id as an argument.
+          To import a particular harvest object use the -o option.
+          To import a particular package use the -p option.
+
+          You will need to specify the -j flag in cases where the datasets are
+          not yet created (e.g. first harvest, or all previous harvests have
+          failed)
 
           The --segments flag allows to define a string containing hex digits that represent which of
           the 16 harvest object segments to import. e.g. 15af will run segments 1,5,a,f
 
       harvester job-all
         - create new harvest jobs for all active sources.
-
-      harvester job-run {source-id}
-        - does a complete harvest synchronously - create job, run, gather & fetch.
-          NB Do not run this whilst the fetch or gather processes are running in the background,
-          or you'll get duplicate harvest objects and error because the gather & fetch jobs get
-          done in the background.
-
-      harvester job-abort {source-id}
-        - marks a job as "Aborted" so that the source can be restarted afresh.
-          Does not actually stop running or queued harvest fetchs/objects.
 
     The commands should be run from the ckanext-harvest directory and expect
     a development.ini file to be present. Most of the time you will
@@ -78,7 +93,7 @@ class Harvester(CkanCommand):
 
     summary = __doc__.split('\n')[0]
     usage = __doc__
-    max_args = 6
+    max_args = 9
     min_args = 0
 
     def __init__(self,name):
@@ -87,6 +102,12 @@ class Harvester(CkanCommand):
 
         self.parser.add_option('-j', '--no-join-datasets', dest='no_join_datasets',
             action='store_true', default=False, help='Do not join harvest objects to existing datasets')
+
+        self.parser.add_option('-o', '--harvest-object-id', dest='harvest_object_id',
+            default=False, help='Id of the harvest object to which perfom the import stage')
+
+        self.parser.add_option('-p', '--package-id', dest='package_id',
+            default=False, help='Id of the package whose harvest object to perfom the import stage for')
 
         self.parser.add_option('--segments', dest='segments',
             default=False, help=
@@ -109,7 +130,10 @@ class Harvester(CkanCommand):
             sys.exit(1)
         cmd = self.args[0]
         if cmd == 'source':
-            self.create_harvest_source()
+            if len(self.args) > 2:
+                self.create_harvest_source()
+            else:
+                self.show_harvest_source()
         elif cmd == "rmsource":
             self.remove_harvest_source()
         elif cmd == 'clearsource':
@@ -120,8 +144,12 @@ class Harvester(CkanCommand):
             self.create_harvest_job()
         elif cmd == 'jobs':
             self.list_harvest_jobs()
+        elif cmd == 'job_abort':
+            self.job_abort()
         elif cmd == 'run':
             self.run_harvester()
+        elif cmd == 'run_test':
+            self.run_test_harvest()
         elif cmd == 'gather_consumer':
             import logging
             from ckanext.harvest.queue import get_gather_consumer
@@ -146,11 +174,6 @@ class Harvester(CkanCommand):
         elif cmd == 'harvesters-info':
             harvesters_info = get_action('harvesters_info_show')()
             pprint(harvesters_info)
-        elif cmd == 'job-run':
-            self.job_run()
-        elif cmd == 'job-abort':
-            source_id = unicode(self.args[1])
-            self.job_abort(source_id)
         else:
             print 'Command %s not recognized' % cmd
 
@@ -211,12 +234,26 @@ class Harvester(CkanCommand):
             self.print_there_are('harvest source', sources)
 
             # Create a harvest job for the new source
-            get_action('harvest_job_create')(context,{'source_id':source['id']})
+            get_action('harvest_job_create')(
+                context, {'source_id': source['id'], 'run': True})
             print 'A new Harvest Job for this source has also been created'
         except ValidationError,e:
            print 'An error occurred:'
            print str(e.error_dict)
            raise e
+
+    def show_harvest_source(self):
+
+        if len(self.args) >= 2:
+            source_id_or_name = unicode(self.args[1])
+        else:
+            print 'Please provide a source name'
+            sys.exit(1)
+        context = {'model': model, 'session': model.Session,
+                   'user': self.admin_user['name']}
+        source = get_action('harvest_source_show')(
+            context, {'id': source_id_or_name})
+        self.print_harvest_source(source)
 
     def remove_harvest_source(self):
         if len(self.args) >= 2:
@@ -259,7 +296,8 @@ class Harvester(CkanCommand):
             sys.exit(1)
 
         context = {'model': model,'session':model.Session, 'user': self.admin_user['name']}
-        job = get_action('harvest_job_create')(context,{'source_id':source_id})
+        job = get_action('harvest_job_create')(
+                context, {'source_id': source_id, 'run': True})
 
         self.print_harvest_job(job)
         jobs = get_action('harvest_job_list')(context,{'status':u'New'})
@@ -274,139 +312,99 @@ class Harvester(CkanCommand):
         self.print_harvest_jobs(jobs)
         self.print_there_are(what='harvest job', sequence=jobs)
 
-    def run_harvester(self):
-        context = {'model': model, 'user': self.admin_user['name'], 'session':model.Session}
-        jobs = get_action('harvest_jobs_run')(context,{})
+    def job_abort(self):
+        if len(self.args) >= 2:
+            job_or_source_id_or_name = unicode(self.args[1])
+        else:
+            print 'Please provide a job id or source name/id'
+            sys.exit(1)
 
-        #print 'Sent %s jobs to the gather queue' % len(jobs)
-        return jobs
+        context = {'model': model, 'user': self.admin_user['name'],
+                   'session': model.Session}
+        job = get_action('harvest_job_abort')(
+            context, {'id': job_or_source_id_or_name})
+        print 'Job status: {0}'.format(job['status'])
+
+    def run_harvester(self):
+        context = {'model': model, 'user': self.admin_user['name'],
+                   'session': model.Session}
+        get_action('harvest_jobs_run')(context, {})
+
+    def run_test_harvest(self):
+        from ckanext.harvest import queue
+        from ckanext.harvest.tests import lib
+        from ckanext.harvest.logic import HarvestJobExists
+        from ckanext.harvest.model import HarvestJob
+
+        # Determine the source
+        if len(self.args) >= 2:
+            source_id_or_name = unicode(self.args[1])
+        else:
+            print 'Please provide a source id'
+            sys.exit(1)
+        context = {'model': model, 'session': model.Session,
+                   'user': self.admin_user['name']}
+        source = get_action('harvest_source_show')(
+            context, {'id': source_id_or_name})
+
+        # Determine the job
+        try:
+            job_dict = get_action('harvest_job_create')(
+                context, {'source_id': source['id']})
+        except HarvestJobExists:
+            running_jobs = get_action('harvest_job_list')(
+                context, {'source_id': source['id'], 'status': 'Running'})
+            if running_jobs:
+                print '\nSource "%s" apparently has a "Running" job:\n%r' \
+                    % (source.get('name') or source['id'], running_jobs)
+                resp = raw_input('Abort it? (y/n)')
+                if not resp.lower().startswith('y'):
+                    sys.exit(1)
+                job_dict = get_action('harvest_job_abort')(
+                    context, {'source_id': source['id']})
+            else:
+                print 'Reusing existing harvest job'
+                jobs = get_action('harvest_job_list')(
+                    context, {'source_id': source['id'], 'status': 'New'})
+                assert len(jobs) == 1, \
+                    'Multiple "New" jobs for this source! %r' % jobs
+                job_dict = jobs[0]
+        job_obj = HarvestJob.get(job_dict['id'])
+
+        harvester = queue.get_harvester(source['type'])
+        assert harvester, \
+            'No harvester found for type: %s' % source['type']
+        lib.run_harvest_job(job_obj, harvester)
 
     def import_stage(self):
-        id_ = None
-        id_types = ('source', 'harvest_object_id', 'guid')
-        if len(self.args) == 1:
-            # i.e all sources/objects
-            pass
-        elif len(self.args) == 2:
-            print 'ERROR: Specify ID type: %s' % str(id_types)
-            sys.exit(1)
-        elif len(self.args) == 3:
-            id_type = self.args[1]
-            if id_type not in id_types:
-                print 'ERROR: ID type "%s" not allowed. Choose from: %s' % \
-                      (id_type, id_types)
-                sys.exit(1)
-            if id_type == 'source':
-                id_ = unicode(self.args[2])
-            elif id_type == 'harvest_object_id':
-                id_ = unicode(self.args[2])
-            elif id_type == 'guid':
-                id_ = unicode(self.args[2])
 
-        context = {'model': model, 'session':model.Session, 'user': self.admin_user['name'],
+        if len(self.args) >= 2:
+            source_id_or_name = unicode(self.args[1])
+            context = {'model': model, 'session': model.Session,
+                       'user': self.admin_user['name']}
+            source = get_action('harvest_source_show')(
+                context, {'id': source_id_or_name})
+            source_id = source['id']
+        else:
+            source_id = None
+
+        context = {'model': model, 'session': model.Session,
+                   'user': self.admin_user['name'],
                    'join_datasets': not self.options.no_join_datasets,
                    'segments': self.options.segments}
 
-        data_dict = {id_type: id_} if id_ else {}
-        num_objs = get_action('harvest_objects_import')(context, data_dict)
+        objs_count = get_action('harvest_objects_import')(context, {
+            'source_id': source_id,
+            'harvest_object_id': self.options.harvest_object_id,
+            'package_id': self.options.package_id,
+            })
 
-        print '%s objects reimported' % num_objs
+        print '%s objects reimported' % objs_count
 
     def create_harvest_job_all(self):
         context = {'model': model, 'user': self.admin_user['name'], 'session':model.Session}
         jobs = get_action('harvest_job_create_all')(context,{})
         print 'Created %s new harvest jobs' % len(jobs)
-
-    def job_run(self):
-        import logging
-        from ckan import model
-        from ckanext.harvest import queue
-        from ckanext.harvest.logic import HarvestJobExists
-        from ckanext.harvest.queue import get_gather_consumer, get_fetch_consumer
-
-        logging.getLogger('amqplib').setLevel(logging.INFO)
-
-        source_id = unicode(self.args[1])
-
-        # ensure the queues are empty - needed for this command to run ok
-        gather_consumer = get_gather_consumer()
-        fetch_consumer = get_fetch_consumer()
-        for queue_name, consumer in (('gather', gather_consumer),
-                                     ('fetch', fetch_consumer)):
-            msg = consumer.fetch()
-            if msg:
-                print 'Message on %s queue:\n%r' % (queue_name, msg.__dict__)
-                resp = raw_input('%s queue is not empty, but needs to be for this command to run. Clear it? (y/n)' % (queue_name.capitalize()))
-                if not resp.lower().startswith('y'):
-                    sys.exit(1)
-                while msg:
-                    print 'Delete %s message: %r' % (queue_name, msg)
-                    msg.ack()
-                    msg = consumer.fetch()
-
-        # get the source id first (source_id may be a source.name)
-        context = {'model': model, 'user': self.admin_user['name'],
-                   'session': model.Session}
-        source = get_action('harvest_source_show')(context,
-                                                   {'id': source_id})
-        # create harvest job
-        try:
-            job = get_action('harvest_job_create')(context,
-                                                   {'source_id': source['id']})
-        except HarvestJobExists:
-            # Job has been created already - we can probably use it.
-            # If job status is 'New' then it is ready to run.
-            from ckan import model
-            context = {'model': model, 'user': self.admin_user['name'],
-                       'session': model.Session}
-            jobs = get_action('harvest_job_list')(context,
-                                                 {'source_id': source['id']})
-            job = jobs[0]  # latest one
-            if job['status'] != 'New':
-                # Non-new status happens when the job is in progress or has
-                # gone wrong and is left in limbo, such as during dev work,
-                # which is why we access model in this code, rather than have a
-                # logic function for it.
-                resp = raw_input('The job for this source is in progress or in limbo. Job:%s start:%s status:%s. Start new job?' % (job['id'], job['created'], job['status']))
-                if not resp.lower().startswith('y'):
-                    sys.exit(1)
-                print 'Closing old job cleanly'
-                job = get_action('harvest_job_abort')(context,
-                                                    {'source_id': source['id']})
-                print 'Starting new job'
-                job = get_action('harvest_job_create')(context, {'source_id': source['id']})
-
-        # run - sends the job to the gather queue
-        jobs = get_action('harvest_jobs_run')(context, {'source_id': source['id']})
-        assert jobs
-
-        # gather
-        logging.getLogger('ckan.cli').info('Gather')
-        message = gather_consumer.fetch()
-        if not message:
-            print 'Could not get gather message - probably because the gather process is running elsewhere.'
-            sys.exit(1)
-        queue.gather_callback({'harvest_job_id': job['id']}, message)
-
-        # fetch
-        logging.getLogger('ckan.cli').info('Fetch')
-        while True:
-            message = fetch_consumer.fetch()
-            if not message:
-                break
-            queue.fetch_callback(message.payload, message)
-
-        # run - mark the job as finished
-        jobs = get_action('harvest_jobs_run')(context, {'source_id': source['id']})
-
-    def job_abort(self, source_id):
-        # Get the latest job
-        from ckan import model
-        context = {'model': model, 'user': self.admin_user['name'],
-                   'session': model.Session}
-        job = get_action('harvest_job_abort')(context,
-                                              {'source_id': source_id})
-        print 'Job status: {0}'.format(job['status'])
 
     def print_harvest_sources(self, sources):
         if sources:
@@ -416,9 +414,13 @@ class Harvester(CkanCommand):
 
     def print_harvest_source(self, source):
         print 'Source id: %s' % source['id']
+        if 'name' in source:
+            # 'name' is only there if the source comes from the Package
+            print '     name: %s' % source.get('name')
         print '      url: %s' % source['url']
         print '     type: %s' % source['type']
         print '   active: %s' % source['active']
+        print 'frequency: %s' % source.get('frequency')
         print '     user: %s' % source['user_id']
         print 'publisher: %s' % source['publisher_id']
         #print '     jobs: %s' % source['status']['job_count']

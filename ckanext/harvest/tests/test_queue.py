@@ -1,17 +1,20 @@
-from nose.tools import assert_equal, assert_raises
+try:
+    from ckan.tests.helpers import reset_db
+except ImportError:
+    from ckan.new_tests.helpers import reset_db
 
 import ckanext.harvest.model as harvest_model
 from ckanext.harvest.model import HarvestObject, HarvestObjectExtra
 from ckanext.harvest.interfaces import IHarvester
 import ckanext.harvest.queue as queue
 from ckanext.harvest.logic import HarvestJobExists
-from ckanext.harvest.queue import get_gather_consumer, get_fetch_consumer
 from ckan.plugins.core import SingletonPlugin, implements
 from ckan.plugins import toolkit as tk
 from ckan.new_tests import factories
 import json
 import ckan.logic as logic
 from ckan import model
+from nose.tools import assert_equal, assert_raises
 
 get_action = tk.get_action
 
@@ -25,7 +28,7 @@ def pop(consumer):
     return message.payload, message
 
 
-class TestHarvester(SingletonPlugin):
+class MockHarvester(SingletonPlugin):
     implements(IHarvester)
     def info(self):
         return {'name': 'test', 'title': 'test', 'description': 'test'}
@@ -45,14 +48,14 @@ class TestHarvester(SingletonPlugin):
         return []
 
     def fetch_stage(self, harvest_object):
-        assert harvest_object.state == "FETCH"
+        assert_equal(harvest_object.state, "FETCH")
         assert harvest_object.fetch_started != None
         harvest_object.content = json.dumps({'name': harvest_object.guid})
         harvest_object.save()
         return True
 
     def import_stage(self, harvest_object):
-        assert harvest_object.state == "IMPORT"
+        assert_equal(harvest_object.state, "IMPORT")
         assert harvest_object.fetch_finished != None
         assert harvest_object.import_started != None
 
@@ -101,12 +104,8 @@ class TestHarvestQueue(object):
     in detail.'''
     @classmethod
     def setup_class(cls):
+        reset_db()
         harvest_model.setup()
-
-    @classmethod
-    def teardown_class(cls):
-        model.repo.rebuild_db()
-
 
     def test_01_basic_harvester(self):
 
@@ -152,19 +151,14 @@ class TestHarvestQueue(object):
 
         harvest_job = logic.get_action('harvest_job_create')(
             context,
-            {'source_id':harvest_source['id']}
+            {'source_id':harvest_source['id'], 'run': True}
         )
 
         job_id = harvest_job['id']
 
         assert harvest_job['source_id'] == harvest_source['id'], harvest_job
 
-        assert harvest_job['status'] == u'New'
-
-        logic.get_action('harvest_jobs_run')(
-            context,
-            {'source_id':harvest_source['id']}
-        )
+        assert harvest_job['status'] == u'Running'
 
         assert logic.get_action('harvest_job_show')(
             context,
@@ -198,30 +192,27 @@ class TestHarvestQueue(object):
         assert count == 3
         all_objects = model.Session.query(HarvestObject).filter_by(current=True).all()
 
-        assert len(all_objects) == 3
-        assert all_objects[0].state == 'COMPLETE'
-        assert all_objects[0].report_status == 'new'
-        assert all_objects[1].state == 'COMPLETE'
-        assert all_objects[1].report_status == 'new'
-        assert all_objects[2].state == 'COMPLETE'
-        assert all_objects[2].report_status == 'new'
+        assert_equal(len(all_objects), 3)
+        assert_equal(all_objects[0].state, 'COMPLETE')
+        assert_equal(all_objects[0].report_status, 'added')
+        assert_equal(all_objects[1].state, 'COMPLETE')
+        assert_equal(all_objects[1].report_status, 'added')
+        assert_equal(all_objects[2].state, 'COMPLETE')
+        assert_equal(all_objects[2].report_status, 'added')
 
         ## fire run again to check if job is set to Finished
-        try:
-            logic.get_action('harvest_jobs_run')(
-                context,
-                {'source_id':harvest_source['id']}
-            )
-        except Exception, e:
-            assert 'There are no new harvesting jobs' in str(e)
+        logic.get_action('harvest_jobs_run')(
+            context,
+            {'source_id':harvest_source['id']}
+        )
 
         harvest_job = logic.get_action('harvest_job_show')(
             context_fresh.copy(),
             {'id': job_id}
         )
 
-        assert harvest_job['status'] == u'Finished'
-        assert harvest_job['stats'] == {'new': 3}
+        assert_equal(harvest_job['status'], u'Finished')
+        assert_equal(harvest_job['stats'], {'added': 3, 'updated': 0, 'not modified': 0, 'errored': 0, 'deleted': 0})
 
         context['include_status'] = True  # DGU only
         context['include_job_status'] = True  # DGU only
@@ -230,20 +221,14 @@ class TestHarvestQueue(object):
             {'id': harvest_source['id']}
         )
 
-        assert harvest_source_dict['status']['last_job']['stats'] == {'new': 3}
-        assert harvest_source_dict['status']['total_datasets'] == 3
-        assert harvest_source_dict['status']['job_count'] == 1
-
+        assert_equal(harvest_source_dict['status']['last_job']['stats'], {'added': 3, 'updated': 0, 'not modified': 0, 'errored': 0, 'deleted': 0})
+        assert_equal(harvest_source_dict['status']['total_datasets'], 3)
+        assert_equal(harvest_source_dict['status']['job_count'], 1)
 
         ########### Second run ########################
         harvest_job = logic.get_action('harvest_job_create')(
             context,
-            {'source_id':harvest_source['id']}
-        )
-
-        logic.get_action('harvest_jobs_run')(
-            context,
-            {'source_id':harvest_source['id']}
+            {'source_id':harvest_source['id'], 'run': True}
         )
 
         job_id = harvest_job['id']
@@ -268,23 +253,20 @@ class TestHarvestQueue(object):
                 .count()
         assert count == 3
 
-        all_objects = model.Session.query(HarvestObject).filter_by(report_status='new').all()
+        all_objects = model.Session.query(HarvestObject).filter_by(report_status='added').all()
         assert len(all_objects) == 3, len(all_objects)
 
-        all_objects = model.Session.query(HarvestObject).filter_by(report_status='reimported').all()
+        all_objects = model.Session.query(HarvestObject).filter_by(report_status='updated').all()
         assert len(all_objects) == 2, len(all_objects)
 
-        all_objects = model.Session.query(HarvestObject).filter_by(report_status='unchanged').all()
+        all_objects = model.Session.query(HarvestObject).filter_by(report_status='not modified').all()
         assert len(all_objects) == 1, len(all_objects)
 
         # run to make sure job is marked as finshed
-        try:
-            logic.get_action('harvest_jobs_run')(
-                context,
-                {'source_id':harvest_source['id']}
-            )
-        except Exception, e:
-            assert 'There are no new harvesting jobs' in str(e)
+        logic.get_action('harvest_jobs_run')(
+            context,
+            {'source_id':harvest_source['id']}
+        )
 
         context_ = context.copy()
         context_['return_stats'] = True
@@ -292,7 +274,7 @@ class TestHarvestQueue(object):
             context_,
             {'id': job_id}
         )
-        assert harvest_job['stats'] == {'reimported': 2, 'unchanged': 1}
+        assert_equal(harvest_job['stats'], {'added': 0, 'updated': 2, 'not modified': 1, 'errored': 0, 'deleted': 0})
 
         context['detailed'] = True
         context['include_status'] = True  # DGU only
@@ -302,9 +284,9 @@ class TestHarvestQueue(object):
             {'id': harvest_source['id']}
         )
 
-        assert harvest_source_dict['status']['last_job']['stats'] == {'reimported': 2, 'unchanged': 1}
-        assert harvest_source_dict['status']['total_datasets'] == 2
-        assert harvest_source_dict['status']['job_count'] == 2
+        assert_equal(harvest_job['stats'], {'added': 0, 'updated': 2, 'not modified': 1, 'errored': 0, 'deleted': 0})
+        assert_equal(harvest_source_dict['status']['total_datasets'], 2)
+        assert_equal(harvest_source_dict['status']['job_count'], 2)
 
 
 class GatherException(Exception):
@@ -419,15 +401,12 @@ class TestHarvestQueueBlackBox(object):
                                                    {'id': source_id})
         # create harvest job
         try:
-            job = get_action('harvest_job_create')(context,
-                                                   {'source_id': source['id']})
+            job = get_action('harvest_job_create')(
+                context,
+                {'source_id': source['id'], 'run': True})
         except HarvestJobExists:
             log.debug('Job exists - cannot create it')
             raise
-
-        # run - sends the job to the gather queue
-        jobs = get_action('harvest_jobs_run')(context, {'source_id': source['id']})
-        assert jobs
 
         # gather
         log.info('Gather')
@@ -489,17 +468,17 @@ class TestHarvestQueueBlackBox(object):
         source = self._create_source('basic_test', source_type='test')
         job, source = self._job_run(source['id'])
 
-        assert job['stats'] == {'new': 3}
+        assert_equal(job['stats'], {'added': 3, 'updated': 0, 'not modified': 0, 'errored': 0, 'deleted': 0})
         assert len(job['objects']) == 3
-        assert source['status']['last_job']['stats'] == {'new': 3}
+        assert_equal(source['status']['last_job']['stats'], {'added': 3, 'updated': 0, 'not modified': 0, 'errored': 0, 'deleted': 0})
         assert source['status']['total_datasets'] == 3
         assert source['status']['job_count'] == 1
 
         # second run
         job, source = self._job_run(source['id'])
 
-        assert job['stats'] == {'reimported': 2, 'unchanged': 1}
-        assert source['status']['last_job']['stats'] == {'reimported': 2, 'unchanged': 1}
+        assert_equal(job['stats'], {'added': 0, 'updated': 2, 'not modified': 1, 'errored': 0, 'deleted': 0})
+        assert_equal(source['status']['last_job']['stats'], {'added': 0, 'updated': 2, 'not modified': 1, 'errored': 0, 'deleted': 0})
         assert source['status']['total_datasets'] == 2
         assert source['status']['job_count'] == 2
 
@@ -509,7 +488,7 @@ class TestHarvestQueueBlackBox(object):
         assert_raises(GatherException, self._job_run, source['id'])
         job, source = self._harvest_job_show(), self._harvest_source_show()
         assert job['status'] == 'Aborted'
-        assert job['stats'] == {}
+        assert_equal(job['stats'], {'added': 0, 'updated': 0, 'not modified': 0, 'errored': 0, 'deleted': 0})
         assert source['status']['last_job']['gather_finished']
 
     def test_gather_excepts_after_creating_objects(self):
@@ -530,4 +509,4 @@ class TestHarvestQueueBlackBox(object):
         assert job['objects'][0]['report_status'] == 'errored'
         assert job['objects'][0]['fetch_finished']
         assert job['objects'][0]['current'] is False
-        assert source['status']['last_job']['stats'] == {'errored': 1}
+        assert_equal(source['status']['last_job']['stats'], {'added': 0, 'updated': 0, 'not modified': 0, 'errored': 1, 'deleted': 0})

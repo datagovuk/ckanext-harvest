@@ -1,4 +1,5 @@
 import urllib2
+import httplib
 import dateutil.parser
 
 from paste.deploy.converters import asbool
@@ -8,6 +9,7 @@ from ckan import model
 from ckan.model import Session, Package
 from ckan.logic import ValidationError, NotFound, get_action
 from ckan.lib.helpers import json
+from ckan.lib.munge import munge_name
 from ckan.plugins.core import implements
 
 from ckanext.harvest.model import HarvestJob, HarvestObject, \
@@ -28,7 +30,6 @@ class CKANHarvester(DguHarvesterBase):
     config = None
 
     api_version = 2
-    ckan_revision_api_works = True
 
     def _get_rest_api_offset(self):
         return '/api/%d/rest' % self.api_version
@@ -38,36 +39,50 @@ class CKANHarvester(DguHarvesterBase):
 
     def _get_content(self, url):
         http_request = urllib2.Request(
-            url = url,
+            url=url,
         )
 
-        api_key = self.config.get('api_key',None)
+        api_key = self.config.get('api_key', None)
         if api_key:
-            http_request.add_header('Authorization',api_key)
-        http_response = urllib2.urlopen(http_request)
+            http_request.add_header('Authorization', api_key)
+        try:
+            http_response = urllib2.urlopen(http_request)
+        except urllib2.HTTPError, e:
+            raise ContentFetchError('HTTP error: %s' % e.code)
+        except urllib2.URLError, e:
+            raise ContentFetchError('URL error: %s' % e.reason)
+        except httplib.HTTPException, e:
+            raise ContentFetchError('HTTP Exception: %s' % e)
 
         return http_response.read()
 
     def _get_group(self, base_url, group_name):
-        url = base_url + self._get_rest_api_offset() + '/group/' + group_name
+        url = base_url + self._get_rest_api_offset() + '/group/' + munge_name(group_name)
         try:
             content = self._get_content(url)
             return json.loads(content)
-        except Exception, e:
-            raise e
+        except (ContentFetchError, ValueError):
+            log.debug('Could not fetch/decode remote group')
+            raise RemoteResourceError('Could not fetch/decode remote group')
+
+    def _get_organization(self, base_url, org_name):
+        url = base_url + self._get_action_api_offset() + '/organization_show?id=' + org_name
+        try:
+            content = self._get_content(url)
+            content_dict = json.loads(content)
+            return content_dict['result']
+        except (ContentFetchError, ValueError, KeyError):
+            log.debug('Could not fetch/decode remote group')
+            raise RemoteResourceError('Could not fetch/decode remote organization')
 
     def _set_config(self,config_str):
         if config_str:
             self.config = json.loads(config_str)
             if self.config.get('api_version'):
                 self.api_version = int(self.config['api_version'])
-            self.organizations_include = self.config.get('organizations_filter_include', [])
-            self.organizations_exclude = self.config.get('organizations_filter_exclude', [])
             log.debug('Using config: %r', self.config)
         else:
             self.config = {}
-            self.organizations_include = []
-            self.organizations_exclude = []
 
     def info(self):
         return {
@@ -89,14 +104,6 @@ class CKANHarvester(DguHarvesterBase):
                     int(config_obj['api_version'])
                 except ValueError:
                     raise ValueError('api_version must be an integer')
-
-            if 'organizations_filter_include' in config_obj:
-                if not isinstance(config_obj['organizations_filter_include'],list):
-                    raise ValueError('organizations_filter_include must be a list')
-
-            if 'organizations_filter_exclude' in config_obj:
-                if not isinstance(config_obj['organizations_filter_exclude'],list):
-                    raise ValueError('organizations_filter_exclude must be a list')
 
             if 'default_tags' in config_obj:
                 if not isinstance(config_obj['default_tags'],list):
@@ -126,7 +133,7 @@ class CKANHarvester(DguHarvesterBase):
                 except NotFound,e:
                     raise ValueError('User not found')
 
-            for key in ('force_all'):
+            for key in ('force_all',):
                 if key in config_obj:
                     if not isinstance(config_obj[key],bool):
                         raise ValueError('%s must be boolean' % key)
@@ -157,19 +164,35 @@ class CKANHarvester(DguHarvesterBase):
         base_rest_url = base_url + self._get_rest_api_offset()
         base_search_url = base_url + self._get_search_api_offset()
 
+        # Filter in/out datasets from particular organizations
+        org_filter_include = self.config.get('organizations_filter_include', [])
+        org_filter_exclude = self.config.get('organizations_filter_exclude', [])
+        def get_pkg_ids_for_organizations(orgs):
+            pkg_ids = set()
+            for organization in orgs:
+                url = base_search_url + '/dataset?organization=%s' % organization
+                content = self._get_content(url)
+                content_json = json.loads(content)
+                result_count = int(content_json['count'])
+                pkg_ids |= set(content_json['results'])
+                while len(pkg_ids) < result_count or not content_json['results']:
+                    url = base_search_url + '/dataset?organization=%s&offset=%s' % (organization, len(pkg_ids))
+                    content = self._get_content(url)
+                    content_json = json.loads(content)
+                    pkg_ids |= set(content_json['results'])
+            return pkg_ids
+        include_pkg_ids = get_pkg_ids_for_organizations(org_filter_include)
+        exclude_pkg_ids = get_pkg_ids_for_organizations(org_filter_exclude)
+
         # Under normal circumstances we can just get the packages modified
         # since the last job
-        if (self.ckan_revision_api_works and
-                previous_job and not previous_job.gather_errors and
-                len(previous_job.objects)):
-            if not self.config.get('force_all'):
+        if (previous_job and not previous_job.gather_errors and not len(previous_job.objects) == 0):
+            if not self.config.get('force_all',False):
                 get_all_packages = False
 
                 # Request only the packages modified since last harvest job
                 last_time = previous_job.gather_finished.isoformat()
                 url = base_search_url + '/revision?since_time=%s' % last_time
-                # NB CKAN API v3 doesn't appear to have an equivalent yet (!)
-                # but try this one anyway, as it falls back to the next method.
 
                 try:
                     log.debug('Trying revision API: %s', url)
@@ -182,7 +205,7 @@ class CKANHarvester(DguHarvesterBase):
                             url = base_rest_url + '/revision/%s' % revision_id
                             try:
                                 content = self._get_content(url)
-                            except Exception, e:
+                            except ContentFetchError, e:
                                 self._save_gather_error(
                                     'Unable to get content for URL: %s: %s' %
                                     (url, e), harvest_job)
@@ -200,9 +223,9 @@ class CKANHarvester(DguHarvesterBase):
                         log.info('No packages have been updated on the remote CKAN instance since the last harvest job')
                         return None
 
-                except urllib2.HTTPError, e:
+                except ContentFetchError, e:
                     if e.getcode() == 400:
-                        log.info('CKAN instance %s does not suport revision filtering' % base_url)
+                        log.info('CKAN instance %s does not support revision filtering' % base_url)
                         get_all_packages = True
                     else:
                         self._save_gather_error(
@@ -220,6 +243,12 @@ class CKANHarvester(DguHarvesterBase):
             if package_ids is None:
                 # gather_error already saved
                 return None
+
+        if org_filter_include:
+            package_ids = set(package_ids) & include_pkg_ids
+        elif org_filter_exclude:
+            package_ids = set(package_ids) - exclude_pkg_ids
+
         try:
             object_ids = []
             if not package_ids:
@@ -246,7 +275,7 @@ class CKANHarvester(DguHarvesterBase):
         log.debug('Getting list of datasets: %s', url)
         try:
             content = self._get_content(url)
-        except Exception, e:
+        except ContentFetchError, e:
             self._save_gather_error('Unable to get content for URL: %s - %s'
                                     % (url, e), harvest_job)
             return None
@@ -279,20 +308,7 @@ class CKANHarvester(DguHarvesterBase):
                 harvest_object)
             return False
 
-        # If configuration contains a list of organizations we want to restrict
-        # the harvester to, then check this dataset is in one of those orgs.
-        organization_dict = dataset.get('organization')
-        if organization_dict:
-            org_name = organization_dict.get('name', '')
-            if self.organizations_include:
-                if not org_name in self.organizations_include:
-                    log.debug('Skipping dataset %s as organization %s not in organizations_filter_include' % (dataset['name'], org_name,))
-                    return 'unchanged'
-            if self.organizations_exclude:
-                if org_name in self.organizations_exclude:
-                    log.debug('Skipping dataset %s as organisation %s is in organizations_filter_exclude' % (dataset['name'], org_name,))
-                    return 'unchanged'
-
+        # DGU Hack
         # Skip datasets that are flagged dgu_harvest_me=false
         ignore_dataset = False
         if isinstance(dataset.get('extras'), dict):
@@ -314,6 +330,16 @@ class CKANHarvester(DguHarvesterBase):
         harvest_object.content = content
         harvest_object.save()
 
+        # DGU Hack - modification date is checked. If it is unchanged since
+        # last harvest then don't harvest.
+        # It is done at this early point because:
+        # * if unchanged then it is efficient to do further harvesting work on
+        #   it
+        # * so that we know how to set status=new/modified - although that's
+        # not necessary now - we can just set it to new_or_changed now.
+        # Is this a useful optimization or unnecessary?  In main-line, this
+        # check is done in _create_or_update_package() in the import_stage.
+
         # Extract the modification date
         modified = dataset.get('metadata_modified')
         # e.g. "2014-05-10T02:22:05.483412"
@@ -329,7 +355,6 @@ class CKANHarvester(DguHarvesterBase):
                 'CKAN modified date did not parse: %s url: %s' % (modified, url),
                 harvest_object)
             return False
-
 
         # Set the HarvestObjectExtra.status
         previous_obj = model.Session.query(HarvestObject) \
@@ -364,13 +389,15 @@ class CKANHarvester(DguHarvesterBase):
 
         return True
 
+    # DGU Hack - _get_package is factored out so it can be overridden by
+    # DKANHarvester
     def _get_package(self, base_url, harvest_object):
         url = base_url + self._get_rest_api_offset() + '/package/' + harvest_object.guid
 
         # Get contents
         try:
             return url, self._get_content(url)
-        except Exception, e:
+        except ContentFetchError, e:
             self._save_object_error(
                 'Unable to get content for package: %s: %s' % (url, e),
                 harvest_object)
@@ -396,6 +423,8 @@ class CKANHarvester(DguHarvesterBase):
         return cls._gen_new_name(remote_name or title,
                                  existing_name=existing_local_name)
 
+    # DGU Hack - with the DguHarvestBase, instead of having an import_stage you
+    # just have a get_package_dict method
     def get_package_dict(self, harvest_object, package_dict_defaults,
                          source_config, existing_dataset):
         log = logging.getLogger(__name__ + '.import.get_package_dict')
@@ -428,7 +457,8 @@ class CKANHarvester(DguHarvesterBase):
 
             # check if remote groups exist locally, otherwise remove
             validated_groups = []
-            context = {'model': model, 'session': Session, 'user': 'harvest'}
+            user_name = self._get_user_name()
+            context = {'model': model, 'session': Session, 'user': user_name}
 
             for group_name in package_dict['groups']:
                 try:
@@ -438,7 +468,7 @@ class CKANHarvester(DguHarvesterBase):
                         validated_groups.append(group['name'])
                     else:
                         validated_groups.append(group['id'])
-                except NotFound, e:
+                except NotFound:
                     log.info('Group %s is not available' % group_name)
                     if remote_groups == 'create':
                         try:
@@ -458,7 +488,8 @@ class CKANHarvester(DguHarvesterBase):
 
             package_dict['groups'] = validated_groups
 
-        context = {'model': model, 'session': Session, 'user': 'harvest'}
+        user_name = self._get_user_name()
+        context = {'model': model, 'session': Session, 'user': user_name}
 
         # Local harvest source organization
         local_org = harvest_object.source.publisher_id
@@ -485,13 +516,18 @@ class CKANHarvester(DguHarvesterBase):
                     log.info('Organization %s is not available' % remote_org)
                     if remote_orgs == 'create':
                         try:
-                            org = self._get_group(harvest_object.source.url, remote_org)
+                            try:
+                                org = self._get_organization(harvest_object.source.url, remote_org)
+                            except RemoteResourceError:
+                                # fallback if remote CKAN exposes organizations as groups
+                                # this especially targets older versions of CKAN
+                                org = self._get_group(harvest_object.source.url, remote_org)
                             for key in ['packages', 'created', 'users', 'groups', 'tags', 'extras', 'display_name', 'type']:
                                 org.pop(key, None)
                             get_action('organization_create')(context, org)
                             log.info('Organization %s has been newly created' % remote_org)
                             validated_org = org['id']
-                        except:
+                        except (RemoteResourceError, ValidationError):
                             log.error('Could not get remote org %s' % remote_org)
 
             package_dict['owner_org'] = validated_org or local_org
@@ -535,15 +571,31 @@ class CKANHarvester(DguHarvesterBase):
         self._fix_tags(package_dict)
 
         for resource in package_dict.get('resources', []):
-            # Clear remote url_type for resources (eg datastore, upload) as we
-            # are only creating normal resources with links to the remote ones
+            # Clear remote url_type for resources (eg datastore, upload) as
+            # we are only creating normal resources with links to the
+            # remote ones
             resource.pop('url_type', None)
+
+            # DGU Hack
             # Details of the upload are irrelevant to this CKAN, so strip that
             if resource.get('resource_type') == 'file.upload':
                 resource['resource_type'] = 'file'
+
+            # Clear revision_id as the revision won't exist on this CKAN
+            # and saving it will cause an IntegrityError with the foreign
+            # key.
+            resource.pop('revision_id', None)
 
         return package_dict
 
     def _fix_tags(self, package_dict):
         package_dict['tags'] = [dict(name=name)
                                 for name in package_dict['tags']]
+
+
+class ContentFetchError(Exception):
+    pass
+
+
+class RemoteResourceError(Exception):
+    pass

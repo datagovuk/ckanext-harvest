@@ -56,7 +56,7 @@ class DguHarvesterBase(HarvesterBase):
         harvest_objects correctly etc, so inherit this method and customize the
         get_package_dict method.
 
-        * HOExtra.status should have been set to 'new', 'changed' or 'deleted'
+        * HOExtra.status should have been set to 'new_or_changed' or 'deleted'
           in the gather or fetch stages.
         * It follows that checking that the metadata date has changed should
           have been done in the gather or fetch stages
@@ -82,7 +82,7 @@ class DguHarvesterBase(HarvesterBase):
         source_config = json.loads(harvest_object.source.config or '{}')
 
         status = harvest_object.get_extra('status')
-        if not status in ['new', 'changed', 'deleted']:
+        if not status in ['new', 'changed', 'new_or_changed', 'deleted']:
             log.error('Status is not set correctly: %r', status)
             self._save_object_error('System error', harvest_object, 'Import')
             return False
@@ -94,7 +94,7 @@ class DguHarvesterBase(HarvesterBase):
                  .filter(HarvestObject.current == True) \
                  .first()
 
-        user = source_config.get('user', 'harvest')
+        user = self._get_user_name()
 
         context = {'model': model, 'session': model.Session, 'user': user,
                    'api_version': 3, 'extras_as_string': True}
@@ -157,7 +157,7 @@ class DguHarvesterBase(HarvesterBase):
                     package_dict_defaults['extras'][extra_key] = \
                         existing_dataset.extras.get(extra_key)
 
-        if status in ('new', 'changed'):
+        if status in ('new', 'changed', 'new_or_changed'):
             # There are 2 circumstances that the status is wrong:
             # 1. we are using 'paster import' to reimport this object, yet
             # status is still 'new' from the previous harvest, yet it needs to

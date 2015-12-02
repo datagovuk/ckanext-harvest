@@ -4,14 +4,17 @@ import re
 import uuid
 
 from sqlalchemy.sql import update, bindparam
+from pylons import config
 
+from ckan import plugins as p
 from ckan import model
 from ckan.model import Session, Package, PACKAGE_NAME_MAX_LENGTH
 from ckan.lib import maintain
 from ckan.logic import ValidationError, NotFound, get_action
 from ckan.logic.schema import default_create_package_schema
-from ckan.lib.navl.validators import ignore_missing, ignore, not_empty
-from ckan.lib.munge import munge_title_to_name, munge_tag
+from ckan.lib.navl.validators import ignore_missing, ignore
+from ckan.lib.munge import munge_title_to_name, substitute_ascii_equivalents
+
 
 from ckanext.harvest.model import HarvestObject, HarvestGatherError, \
                                     HarvestObjectError
@@ -21,6 +24,27 @@ from ckanext.harvest.interfaces import IHarvester
 from ckan.lib.helpers import json
 
 log = logging.getLogger(__name__)
+
+
+if p.toolkit.check_ckan_version(min_version='2.3'):
+    from ckan.lib.munge import munge_tag
+else:
+    # Fallback munge_tag for older ckan versions which don't have a decent
+    # munger
+    def _munge_to_length(string, min_length, max_length):
+        '''Pad/truncates a string'''
+        if len(string) < min_length:
+            string += '_' * (min_length - len(string))
+        if len(string) > max_length:
+            string = string[:max_length]
+        return string
+
+    def munge_tag(tag):
+        tag = substitute_ascii_equivalents(tag)
+        tag = tag.lower().strip()
+        tag = re.sub(r'[^a-zA-Z0-9\- ]', '', tag).replace(' ', '-')
+        tag = _munge_to_length(tag, model.MIN_TAG_LENGTH, model.MAX_TAG_LENGTH)
+        return tag
 
 
 def munge_tags(package_dict):
@@ -47,6 +71,8 @@ class HarvesterBase(SingletonPlugin):
     '''
     implements(IHarvester)
     config = None
+
+    _user_name = None
 
     @classmethod
     def _gen_new_name(cls, title, existing_name=None,
@@ -146,6 +172,47 @@ class HarvesterBase(SingletonPlugin):
     _save_gather_error = HarvestGatherError.create
     _save_object_error = HarvestObjectError.create
 
+    def _get_user_name(self):
+        '''
+        Returns the name of the user that will perform the harvesting actions
+        (deleting, updating and creating datasets)
+
+        By default this will be the old 'harvest' user to maintain
+        compatibility. If not present, the internal site admin user will be
+        used. This is the recommended setting, but if necessary it can be
+        overridden with the `ckanext.harvest.user_name` config option:
+
+           ckanext.harvest.user_name = harvest
+
+        '''
+        if self._user_name:
+            return self._user_name
+
+        config_user_name = config.get('ckanext.harvest.user_name')
+        if config_user_name:
+            self._user_name = config_user_name
+            return self._user_name
+
+        context = {'model': model,
+                   'ignore_auth': True,
+                   }
+
+        # Check if 'harvest' user exists and if is a sysadmin
+        try:
+            user_harvest = p.toolkit.get_action('user_show')(
+                context, {'id': 'harvest'})
+            if user_harvest['sysadmin']:
+                self._user_name = 'harvest'
+                return self._user_name
+        except p.toolkit.ObjectNotFound:
+            pass
+
+        context['defer_commit'] = True  # See ckan/ckan#1714
+        self._site_user = p.toolkit.get_action('get_site_user')(context, {})
+        self._user_name = self._site_user['name']
+
+        return self._user_name
+
     def _create_harvest_objects(self, remote_ids, harvest_job):
         '''
         Given a list of remote ids and a Harvest Job, create as many Harvest Objects and
@@ -177,14 +244,8 @@ class HarvesterBase(SingletonPlugin):
         '''
         return harvest_object.get_extra(key)
 
-    @maintain.deprecated('HarvesterBase._create_or_update_package() is '
-            'deprecated and will be removed in a future version of '
-            'ckanext-harvest. Instead, a harvester should override '
-            'HarvesterBase.import_stage.')
     def _create_or_update_package(self, package_dict, harvest_object):
         '''
-        DEPRECATED!
-
         Creates a new package or updates an exisiting one according to the
         package dictionary provided. The package dictionary should look like
         the REST API response for a package:
@@ -197,6 +258,10 @@ class HarvesterBase(SingletonPlugin):
 
         If the remote server provides the modification date of the remote
         package, add it to package_dict['metadata_modified'].
+
+        :returns: The same as what import_stage should return. i.e. True if the
+                  create or update occurred ok, 'unchanged' if it didn't need
+                  updating or False if there were errors.
 
         TODO: Not sure it is worth keeping this function. If useful it should
         use the output of package_show logic function (maybe keeping support
@@ -214,12 +279,10 @@ class HarvesterBase(SingletonPlugin):
                     api_version = int(self.config.get('api_version', 2))
                 except ValueError:
                     raise ValueError('api_version must be an integer')
-                #TODO: use site user when available
-                user_name = self.config.get('user',u'harvest')
             else:
                 api_version = 2
-                user_name = u'harvest'
 
+            user_name = self._get_user_name()
             context = {
                 'model': model,
                 'session': Session,
@@ -236,10 +299,8 @@ class HarvesterBase(SingletonPlugin):
                 package_dict['tags'] = tags
 
             # Check if package exists
-            data_dict = {}
-            data_dict['id'] = package_dict['id']
             try:
-                existing_package_dict = get_action('package_show')(context, data_dict)
+                existing_package_dict = self._find_existing_package(package_dict)
 
                 # In case name has been modified when first importing. See issue #101.
                 package_dict['name'] = existing_package_dict['name']
@@ -256,7 +317,8 @@ class HarvesterBase(SingletonPlugin):
 
                 else:
                     log.info('Package with GUID %s not updated, skipping...' % harvest_object.guid)
-                    return
+                    # NB harvest_object.current/package_id are not set
+                    return 'unchanged'
 
                 # Flag the other objects linking to this package as not current anymore
                 from ckanext.harvest.model import harvest_object_table
@@ -279,8 +341,11 @@ class HarvesterBase(SingletonPlugin):
                 # exception
                 context.pop('__auth_audit', None)
 
-                # Set name if not already there
-                package_dict['name'] = self._gen_new_name(package_dict['title'])
+                # Set name for new package to prevent name conflict, see issue #117
+                if package_dict.get('name', None):
+                    package_dict['name'] = self._gen_new_name(package_dict['name'])
+                else:
+                    package_dict['name'] = self._gen_new_name(package_dict['title'])
 
                 log.info('Package with GUID %s does not exist, let\'s create it' % harvest_object.guid)
                 harvest_object.current = True
@@ -306,6 +371,13 @@ class HarvesterBase(SingletonPlugin):
             self._save_object_error('%r'%e,harvest_object,'Import')
 
         return None
+
+    def _find_existing_package(self, package_dict):
+        data_dict = {'id': package_dict['id']}
+        package_show_context = {'model': model, 'session': Session,
+                                'ignore_auth': True}
+        return get_action('package_show')(
+            package_show_context, data_dict)
 
     @classmethod
     def get_metadata_provenance_for_just_this_harvest(cls, harvest_object):
@@ -351,7 +423,7 @@ class HarvesterBase(SingletonPlugin):
         NB This should be called at the end of a successful import. The problem
         with doing it any earlier is that a harvest that gets skipped after
         this point will still be marked 'current'. This gives two problems:
-        1. queue.py will set obj.report_status = 'reimported' rather than
+        1. queue.py will set obj.report_status = 'updated' rather than
            'unchanged'.
         2. harvest_object_show with param dataset_id will show you the skipped
            object.

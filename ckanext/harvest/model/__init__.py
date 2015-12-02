@@ -51,54 +51,55 @@ def setup():
         define_harvester_tables()
         log.debug('Harvest tables defined in memory')
 
-    if model.package_table.exists():
-        if not harvest_source_table.exists():
-
-            # Create each table individually rather than
-            # using metadata.create_all()
-            harvest_source_table.create()
-            harvest_job_table.create()
-            harvest_object_table.create()
-            harvest_gather_error_table.create()
-            harvest_object_error_table.create()
-            harvest_coupled_resource_table.create()
-            harvest_object_extra_table.create()
-
-            log.debug('Harvest tables created')
-        else:
-            from ckan.model.meta import engine
-            log.debug('Harvest tables already exist')
-            # Check if existing tables need to be updated
-            inspector = Inspector.from_engine(engine)
-            columns = inspector.get_columns('harvest_source')
-            if not 'title' in [column['name'] for column in columns]:
-                log.debug('Harvest tables updating to v2')
-                migrate_v2()
-            obj_columns = inspector.get_columns('harvest_object')
-            if not 'harvest_source_reference' in \
-                    [column['name'] for column in obj_columns]:
-                log.debug('Harvest tables updating to v3_dgu')
-                migrate_v3_dgu()
-            if not 'frequency' in [column['name'] for column in columns]:
-                log.debug('Harvest tables need to be updated')
-                migrate_v3()
-            if not 'name' in [column['name'] for column in columns]:
-                log.debug('Harvest tables need to be updated to v3.1_dgu')
-                migrate_v3_1_dgu()
-
-            # DGU HACK - we are not converting from harvest sources to datasets so
-            # this is commented out
-            ## Check if this instance has harvest source datasets
-            #source_ids = Session.query(HarvestSource.id).filter_by(active=True).all()
-            #source_package_ids = Session.query(model.Package.id).filter_by(type=u'harvest', state='active').all()
-            #sources_to_migrate = set(source_ids) - set(source_package_ids)
-            #if sources_to_migrate:
-            #    log.debug('Creating harvest source datasets for %i existing sources', len(sources_to_migrate))
-            #    sources_to_migrate = [s[0] for s in sources_to_migrate]
-            #    migrate_v3_create_datasets(sources_to_migrate)
-
-    else:
+    if not model.package_table.exists():
         log.debug('Harvest table creation deferred')
+        return
+
+    if not harvest_source_table.exists():
+
+        # Create each table individually rather than
+        # using metadata.create_all()
+        harvest_source_table.create()
+        harvest_job_table.create()
+        harvest_object_table.create()
+        harvest_gather_error_table.create()
+        harvest_object_error_table.create()
+        harvest_coupled_resource_table.create()
+        harvest_object_extra_table.create()
+
+        log.debug('Harvest tables created')
+    else:
+        from ckan.model.meta import engine
+        log.debug('Harvest tables already exist')
+        # Check if existing tables need to be updated
+        inspector = Inspector.from_engine(engine)
+        columns = inspector.get_columns('harvest_source')
+        column_names = [column['name'] for column in columns]
+        if not 'title' in column_names:
+            log.debug('Harvest tables updating to v2')
+            migrate_v2()
+        obj_columns = inspector.get_columns('harvest_object')
+        obj_column_names = [column['name'] for column in obj_columns]
+        if not 'harvest_source_reference' in obj_column_names:
+            log.debug('Harvest tables updating to v3_dgu')
+            migrate_v3_dgu()
+        if not 'frequency' in column_names:
+            log.debug('Harvest tables need to be updated')
+            migrate_v3()
+        if not 'name' in column_names:
+            log.debug('Harvest tables need to be updated to v3.1_dgu')
+            migrate_v3_1_dgu()
+
+        # DGU HACK - we are not converting from harvest sources to datasets so
+        # this is commented out
+        ## Check if this instance has harvest source datasets
+        #source_ids = Session.query(HarvestSource.id).filter_by(active=True).all()
+        #source_package_ids = Session.query(model.Package.id).filter_by(type=u'harvest', state='active').all()
+        #sources_to_migrate = set(source_ids) - set(source_package_ids)
+        #if sources_to_migrate:
+        #    log.debug('Creating harvest source datasets for %i existing sources', len(sources_to_migrate))
+        #    sources_to_migrate = [s[0] for s in sources_to_migrate]
+        #    migrate_v3_create_datasets(sources_to_migrate)
 
 
 class HarvestDomainObject(DomainObject):
@@ -133,8 +134,9 @@ class HarvestSource(HarvestDomainObject):
     def __repr__(self):
         return '<HarvestSource id=%s title=%s url=%s active=%r>' % \
                (self.id, self.title, self.url, self.active)
+
     def __str__(self):
-        return str(self.__repr__())
+        return self.__repr__().encode('ascii', 'ignore')
 
     @classmethod
     def by_name_or_id(cls, name_or_id):
@@ -155,21 +157,27 @@ class HarvestJob(HarvestDomainObject):
     '''
     def __repr__(self):
         return '<HarvestJob id=%s source_id=%s status=%s created=%r>' % \
-               (self.id, self.source_id, self.status, self.created.strftime('%Y-%m-%d %H:%M'))
+               (self.id, self.source_id, self.status,
+                self.created.strftime('%Y-%m-%d %H:%M') if self.created else None)
+
     def __str__(self):
-        return str(self.__repr__())
+        return self.__repr__().encode('ascii', 'ignore')
 
     def get_object_report_statuses(self):
         '''Returns the counts of 'report_status' values for this job's objects.
         e.g. returns:
-        {'errored': 4, 'deleted': 2, 'unchanged': 5, 'updated': 3, 'added': 6}
+        {'errored': 4, 'deleted': 2, 'not modified': 5, 'updated': 3, 'added': 6}
         '''
+        stats_out = {'added': 0, 'updated': 0, 'not modified': 0,
+                     'errored': 0, 'deleted': 0}
         stats = model.Session.query(
             HarvestObject.report_status,
             func.count(HarvestObject.id).label('total_objects'))\
                 .filter_by(harvest_job_id=self.id)\
                 .group_by(HarvestObject.report_status).all()
-        return dict((status, count) for status, count in stats)
+        for status, count in stats:
+            stats_out[status] = count
+        return stats_out
 
 
 class HarvestObject(HarvestDomainObject):
@@ -182,8 +190,9 @@ class HarvestObject(HarvestDomainObject):
         return '<HarvestObject id=%s guid=%s current=%r content=%s... package_id=%s>' % \
                (self.id, self.guid, self.current,
                 self.content[:10] if self.content else '', self.package_id)
+
     def __str__(self):
-        return str(self.__repr__())
+        return self.__repr__().encode('ascii', 'ignore')
 
     def get_extra(self, key, default=None):
         '''
@@ -310,12 +319,13 @@ class HarvestCoupledResource(HarvestDomainObject):
         return Session.query(HarvestCoupledResource) \
                .filter_by(dataset_record=dataset_record_package)
 
-def harvest_object_before_insert_listener(mapper,connection,target):
+
+def harvest_object_before_insert_listener(mapper, connection, target):
     '''
         For compatibility with old harvesters, check if the source id has
         been set, and set it automatically from the job if not.
     '''
-    if not target.harvest_source_id or not target.source:
+    if not (target.harvest_source_id or target.source):
         if not target.job:
             raise Exception('You must define a Harvest Job for each Harvest Object')
         target.source = target.job.source
@@ -367,8 +377,9 @@ def define_harvester_tables():
         # update because of this 'identity'. The identity needs to be unique
         # within this CKAN.
         Column('guid', types.UnicodeText, default=u''),
-        # When you harvest a dataset multiple times, only the latest will be
-        # flagged 'current'. The import_stage reads and writes it.
+        # When you harvest a dataset multiple times, only the latest
+        # successfully imported harvest_object should be flagged 'current'.
+        # The import_stage usually reads and writes it.
         Column('current',types.Boolean,default=False),
         Column('gathered', types.DateTime, default=datetime.datetime.utcnow),
         Column('fetch_started', types.DateTime),
@@ -384,6 +395,7 @@ def define_harvester_tables():
         Column('harvest_source_id', types.UnicodeText, ForeignKey('harvest_source.id')),
         Column('harvest_source_reference', types.UnicodeText), # id according to the Harvest Source, for Gemini Coupled Resources
         Column('package_id', types.UnicodeText, ForeignKey('package.id', deferrable=True), nullable=True),
+        # report_status: 'added', 'updated', 'not modified', 'deleted', 'errored'
         Column('report_status', types.UnicodeText, nullable=True),
     )
 
