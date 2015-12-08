@@ -187,9 +187,9 @@ class DguHarvesterBase(HarvesterBase):
             return False
         if not package_dict:
             # Nothing to harvest after all.
-            # No error should be recorded, so that's why we return True.
+            # No error should be recorded, so that's why we return 'unchanged'
             # Yet this object is not 'current', so it's clear we skipped.
-            return True
+            return 'unchanged'
 
         if source_config.get('clean_tags'):
             munge_tags(package_dict)
