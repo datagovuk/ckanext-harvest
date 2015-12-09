@@ -94,7 +94,7 @@ def harvest_job_create(context, data_dict):
     exists = _check_for_existing_jobs(context, source_id)
     if exists:
         log.warn('There is already an unrun job %r for this source %s',
-                 exists, source_id)
+                 exists, source.name or source_id)
         raise HarvestJobExists('There already is an unrun job for this source')
 
     job = HarvestJob()

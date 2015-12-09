@@ -394,7 +394,7 @@ def _make_scheduled_jobs(context, data_dict):
         try:
             get_action('harvest_job_create')(context, data_dict)
         except HarvestJobExists:
-            log.info('Trying to rerun job for %s skipping', source.id)
+            log.info('Trying to rerun job for %s skipping', source.name or source.id)
 
         source.next_run = _calculate_next_run(source.frequency)
         source.save()
@@ -456,17 +456,17 @@ def harvest_send_job_to_gather_queue(context, data_dict):
     :type id: string
     '''
     log.info('Send job to gather queue: %r', data_dict)
-    check_access('harvest_send_job_to_gather_queue', context, data_dict)
 
     job_id = toolkit.get_or_bust(data_dict, 'id')
+    job = toolkit.get_action('harvest_job_show')(
+        context, {'id': job_id})
+
+    check_access('harvest_send_job_to_gather_queue', context, job)
 
     # gather queue
 
     # Send each new job to the gather queue
     publisher = get_gather_publisher()
-
-    job = toolkit.get_action('harvest_job_show')(
-        context, {'id': job_id})
 
     # Check the source is active
     context['detailed'] = False
@@ -478,7 +478,9 @@ def harvest_send_job_to_gather_queue(context, data_dict):
     job_obj.status = job['status'] = u'Running'
     job_obj.save()
     publisher.send({'harvest_job_id': job['id']})
-    log.info('Sent job %s to the gather queue', job['id'])
+    log.info('Sent job %s to the gather queue (source=%s)', job['id'],
+             source['name'] or job['source_id'])
+    job_id = toolkit.get_or_bust(data_dict, 'id')
 
     return harvest_job_dictize(job_obj, context)
 
