@@ -11,7 +11,8 @@ def run_harvest(url, harvester, config=''):
     Queues are avoided as they are a pain in tests.
     '''
     # User creates a harvest source
-    source = HarvestSourceObj(url=url, config=config)
+    source_type = harvester.info()['name']
+    source = HarvestSourceObj(url=url, config=config, type=source_type)
 
     # User triggers a harvest, which is the creation of a harvest job.
     # We set run=False so that it doesn't put it on the gather queue.
