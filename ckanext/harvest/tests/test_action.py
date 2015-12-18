@@ -2,6 +2,7 @@ import json
 import factories
 import unittest
 from nose.tools import assert_equal, assert_raises
+from nose.plugins.skip import SkipTest
 
 # DGU has problem with importing old tests, so comment it out
 #try:
@@ -144,6 +145,9 @@ class HarvestSourceActionBase(FunctionalTestBase):
     @classmethod
     def setup_class(cls):
         super(HarvestSourceActionBase, cls).setup_class()
+        if model.engine_is_sqlite():
+            raise SkipTest()
+
         harvest_model.setup()
 
         if not p.plugin_loaded('test_action_harvester'):
@@ -324,6 +328,8 @@ class TestHarvestSourceActionUpdate(HarvestSourceFixtureMixin,
 
 class TestActions(ActionBase):
     def test_harvest_source_clear(self):
+        if model.engine_is_sqlite():
+            raise SkipTest()
         source = factories.HarvestSourceObj(**SOURCE_DICT)
         job = factories.HarvestJobObj(source=source)
         dataset = ckan_factories.Dataset()
@@ -434,6 +440,8 @@ class TestActions(ActionBase):
 class TestHarvestObject(unittest.TestCase):
     @classmethod
     def setup_class(cls):
+        if model.engine_is_sqlite():
+            raise SkipTest()
         reset_db()
         harvest_model.setup()
 

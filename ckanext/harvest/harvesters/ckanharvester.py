@@ -38,9 +38,7 @@ class CKANHarvester(DguHarvesterBase):
         return '/api/%d/search' % self.api_version
 
     def _get_content(self, url):
-        http_request = urllib2.Request(
-            url=url,
-        )
+        http_request = urllib2.Request(url=url)
 
         api_key = self.config.get('api_key', None)
         if api_key:
@@ -48,7 +46,10 @@ class CKANHarvester(DguHarvesterBase):
         try:
             http_response = urllib2.urlopen(http_request)
         except urllib2.HTTPError, e:
-            raise ContentFetchError('HTTP error: %s' % e.code)
+            if e.getcode() == 404:
+                raise ContentNotFoundError('HTTP error: %s' % e.code)
+            else:
+                raise ContentFetchError('HTTP error: %s' % e.code)
         except urllib2.URLError, e:
             raise ContentFetchError('URL error: %s' % e.reason)
         except httplib.HTTPException, e:
@@ -223,15 +224,18 @@ class CKANHarvester(DguHarvesterBase):
                         log.info('No packages have been updated on the remote CKAN instance since the last harvest job')
                         return None
 
+                except ContentNotFoundError, e:
+                    log.info('No revisions since last harvest %s', last_time)
+                    return []
                 except ContentFetchError, e:
-                    if e.getcode() == 400:
-                        log.info('CKAN instance %s does not support revision filtering' % base_url)
-                        get_all_packages = True
-                    else:
-                        self._save_gather_error(
-                            'Unable to get content for URL: %s: %s' %
-                            (url, e), harvest_job)
-                        return None
+                    # Any other error indicates that revision filtering is not
+                    # working for whatever reason, so fallback to just getting
+                    # all the packages, which is expensive but reliable.
+                    log.info('CKAN instance %s does not suport revision '
+                             'filtering: %s',
+                             base_url, e)
+                    get_all_packages = True
+
                 except json.decoder.JSONDecodeError:
                     log.info('CKAN instance %s does not suport revision filtering' % base_url)
                     get_all_packages = True
@@ -473,7 +477,7 @@ class CKANHarvester(DguHarvesterBase):
                     if remote_groups == 'create':
                         try:
                             group = self._get_group(harvest_object.source.url, group_name)
-                        except:
+                        except RemoteResourceError:
                             log.error('Could not get remote group %s' % group_name)
                             continue
 
@@ -594,6 +598,10 @@ class CKANHarvester(DguHarvesterBase):
 
 
 class ContentFetchError(Exception):
+    pass
+
+
+class ContentNotFoundError(ContentFetchError):
     pass
 
 
