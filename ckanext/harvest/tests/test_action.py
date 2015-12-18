@@ -4,16 +4,15 @@ import unittest
 from nose.tools import assert_equal, assert_raises
 from nose.plugins.skip import SkipTest
 
-# DGU has problem with importing old tests, so comment it out
-#try:
-#    from ckan.tests import factories as ckan_factories
-#    from ckan.tests.helpers import (_get_test_app, reset_db,
-#                                    FunctionalTestBase, assert_in)
-#except ImportError:
-if True:
+# DGU has problem with importing old tests, so try new_tests first
+try:
     from ckan.new_tests import factories as ckan_factories
     from ckan.new_tests.helpers import (_get_test_app, reset_db,
                                         FunctionalTestBase, assert_in)
+except ImportError:
+    from ckan.tests import factories as ckan_factories
+    from ckan.tests.helpers import (_get_test_app, reset_db,
+                                    FunctionalTestBase, assert_in)
 from ckan import plugins as p
 from ckan.plugins import toolkit
 from ckan import model
