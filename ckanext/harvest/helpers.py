@@ -45,3 +45,11 @@ def harvest_source_extra_fields():
         fields[harvester.info()['name']] = harvester.extra_schema().keys()
     return fields
 
+def get_org_ids():
+    return [o['id'] for o in h.organizations_available('create_dataset')] if p.toolkit.c.userobj else []
+
+def get_active_sources(sources):
+    return [s for s in sources if s['active']]
+
+def allowed_sources(org_ids):
+    return [s for s in p.toolkit.c.sources if s['publisher_id'] in org_ids]
