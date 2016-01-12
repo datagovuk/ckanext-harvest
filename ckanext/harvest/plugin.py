@@ -79,6 +79,9 @@ class Harvest(p.SingletonPlugin):
                 'harvest_frequencies': harvest_helpers.harvest_frequencies,
                 'link_for_harvest_object': harvest_helpers.link_for_harvest_object,
                 'harvest_source_extra_fields': harvest_helpers.harvest_source_extra_fields,
+                'get_org_ids': harvest_helpers.get_org_ids,
+                'get_active_sources': harvest_helpers.get_active_sources,
+                'allowed_sources': harvest_helpers.allowed_sources
                 }
 
 
