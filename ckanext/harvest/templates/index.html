@@ -21,11 +21,14 @@
             <th>Active</th>
             <th>Created</th>
         </tr>
+
         {% set old_publisher=None%}
         {% set sources=sources%}
+
         {% if not can_edit%}
           {% set sources=h.get_active_sources(sources) %}
         {% endif %}
+
         {% for source in sources %}
             {% if old_publisher!=source['publisher_id']%}
             <tr class="publisher">
@@ -36,8 +39,9 @@
                 {% endif %}
             </tr>
             {% endif %}
+
             {% set old_publisher=source['publisher_id']  %}
-            <tr class="{% if source.active%}active{% else%}inactive{% endif%}}">
+            <tr class="{% if source.active%}active{% else%}inactive{% endif%}">
                 <td align="center">
                   <a href="/harvest/{{source.name or source.id}}">View</a>&nbsp;&nbsp;
                   {% if h.check_access('harvest_source_update', {'id':source.id}) %}
@@ -106,10 +110,7 @@
   </div>
 </div>
 
-
+<script>$("#show-inactive-sources").click(function(){$("#harvest-sources .inactive").toggle()});</script>
 {% endblock%}
 
-{% block optional_footer %}
-      <script>$("#show-inactive-sources").click(function(){$("#harvest-sources .inactive").toggle()});</script>
-{% endblock%}
 
