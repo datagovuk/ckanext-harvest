@@ -90,6 +90,13 @@ class DKANHarvester(CKANHarvester):
                 if 'format' not in resource:
                     resource['format'] = MIMETYPE_FORMATS.get(resource.get('mimetype'), '')
 
+            if 'private' in package:
+                # DKAN appears to have datasets with private=True which are
+                # still public: https://github.com/NuCivic/dkan/issues/950. If
+                # they were really private then we'd not get be able to access
+                # them, so assume they are not private.
+                package['private'] = False
+
             return package
         except Exception, e:
             cls._save_object_error(

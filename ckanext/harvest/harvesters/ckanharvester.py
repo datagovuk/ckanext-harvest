@@ -200,6 +200,9 @@ class CKANHarvester(DguHarvesterBase):
                     content = self._get_content(url)
 
                     revision_ids = json.loads(content)
+                    # DGU hack - DKAN returns a dict, which is wrong
+                    if not isinstance(revision_ids, list):
+                        raise ContentFetchError('Revision API response was not a list')
                     log.debug('Revision API returned %s revisions', len(revision_ids))
                     if len(revision_ids):
                         for revision_id in revision_ids:
