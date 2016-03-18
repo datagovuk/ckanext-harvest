@@ -94,6 +94,27 @@ class DguHarvesterBase(HarvesterBase):
                  .filter(HarvestObject.current == True) \
                  .first()
 
+        # Fix the obscure cases where the last harvested object is disconnected
+        # from its package
+        # i.e. harvest_object where current = true and package_id is null
+        if previous_object and not previous_object.package_id:
+            pkg = model.Session.query(model.Package) \
+                .filter_by(state='active') \
+                .join(model.PackageExtra) \
+                .filter_by(state='active') \
+                .filter_by(key='guid') \
+                .filter_by(value=harvest_object.guid) \
+                .first()
+            if pkg:
+                previous_object.package_id = pkg.id
+                log.info('Previous harvest object %s had no package_id - '
+                         'have fixed with package: %s',
+                         previous_object.id, pkg.name)
+            else:
+                log.warning('Previous harvest object %s has no package_id - '
+                            'could not fix by finding GUID %r',
+                            previous_object.id, harvest_object.guid)
+
         user = self._get_user_name()
 
         context = {'model': model, 'session': model.Session, 'user': user,
