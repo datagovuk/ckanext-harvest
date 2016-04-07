@@ -1,7 +1,9 @@
 try:
     from ckan.tests.helpers import reset_db
+    from ckan.tests import factories
 except ImportError:
     from ckan.new_tests.helpers import reset_db
+    from ckan.new_tests import factories
 
 import ckanext.harvest.model as harvest_model
 from ckanext.harvest.model import HarvestObject, HarvestObjectExtra
@@ -10,7 +12,6 @@ import ckanext.harvest.queue as queue
 from ckanext.harvest.logic import HarvestJobExists
 from ckan.plugins.core import SingletonPlugin, implements
 from ckan.plugins import toolkit as tk
-from ckan.new_tests import factories
 import json
 import ckan.logic as logic
 from ckan import model
