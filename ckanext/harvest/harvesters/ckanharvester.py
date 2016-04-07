@@ -571,6 +571,23 @@ class CKANHarvester(DguHarvesterBase):
         except ImportError:
             pass
 
+        # DGU only - licence munger
+        try:
+            from ckanext.dgu.lib import helpers as dgu_helpers
+            license_obj = dgu_helpers.get_license_from_id(
+                package_dict.get('license_id'))
+            licence = None
+            if not license_obj:
+                # license_id not known to this CKAN, so identify by title
+                license_id, licence = \
+                    dgu_helpers.get_licence_fields_from_free_text(
+                        package_dict.get('license_title', ''))
+                package_dict['license_id'] = license_id
+                if licence:
+                    package_dict['extras']['licence'] = licence
+        except ImportError:
+            pass
+
         # Convert dicts to lists (required for package_create/update)
         package_dict['extras'] = [dict(key=key, value=package_dict['extras'][key])
                                     for key in package_dict['extras']]
