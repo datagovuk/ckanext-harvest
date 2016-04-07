@@ -345,6 +345,10 @@ class TestActions(ActionBase):
         assert source
         assert_equal(harvest_model.HarvestJob.get(job.id), None)
         assert_equal(harvest_model.HarvestObject.get(object_.id), None)
+        # need to refresh the session to ensure that the deleted dataset isn't
+        # returned using model.Package.get (although
+        # model.Session.query(model.Package) will work without the remove)
+        model.Session.remove()
         assert_equal(model.Package.get(dataset['id']), None)
 
     def test_harvest_source_create_twice_with_unique_url(self):
