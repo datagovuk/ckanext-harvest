@@ -1,5 +1,6 @@
 #!/bin/bash
 set -e
+set -x  # echo commands as they are run
 
 echo "This is travis-build.bash..."
 
