@@ -2,7 +2,7 @@ language: python
 python:
     - "2.7"
 env:
-    - CKANVERSION=2.2
+    - CKANVERSION=master
     - CKANVERSION=2.2-dgu
 services:
     - redis-server

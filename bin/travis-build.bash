@@ -15,6 +15,9 @@ then
 elif [ $CKANVERSION == '2.2' ]
 then
     git clone -b release-v2.2.3 https://github.com/ckan/ckan
+elif [ $CKANVERSION == 'master' ]
+then
+    git clone https://github.com/ckan/ckan
 fi
 cd ckan
 python setup.py develop
