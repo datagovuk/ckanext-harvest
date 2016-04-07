@@ -1,11 +1,10 @@
 import factory
 import ckanext.harvest.model as harvest_model
-# DGU has problem with importing old tests, so comment it out
-#try:
-#    from ckan.tests.factories import _get_action_user_name, Organization
-#except ImportError:
-if True:
+# DGU has problem with importing old tests, so try new_tests first
+try:
     from ckan.new_tests.factories import _get_action_user_name, Organization
+except ImportError:
+    from ckan.tests.factories import _get_action_user_name, Organization
 from ckan.plugins import toolkit
 
 
