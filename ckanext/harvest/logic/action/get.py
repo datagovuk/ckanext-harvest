@@ -180,7 +180,7 @@ def harvest_source_show_job_status(context, data_dict):
         # TODO running_job should really just return data, and leave the
         # presentation to the template
         if running_job.gather_started:
-            run_time = datetime.datetime.now() - running_job.gather_started
+            run_time = datetime.datetime.utcnow() - running_job.gather_started
             minutes, seconds = divmod(run_time.seconds, 60)
             out['running_job'] = '%sm %ss' % (minutes, seconds)
         else:
