@@ -168,22 +168,46 @@ class CKANHarvester(DguHarvesterBase):
         # Filter in/out datasets from particular organizations
         org_filter_include = self.config.get('organizations_filter_include', [])
         org_filter_exclude = self.config.get('organizations_filter_exclude', [])
+        if not isinstance(org_filter_include, list):
+            self._save_gather_error('org_filter_include must be a list []',
+                                    harvest_job)
+            return None
+        if not isinstance(org_filter_exclude, list):
+            self._save_gather_error('org_filter_exclude must be a list []',
+                                    harvest_job)
+            return None
         def get_pkg_ids_for_organizations(orgs):
             pkg_ids = set()
             for organization in orgs:
                 url = base_search_url + '/dataset?organization=%s' % organization
-                content = self._get_content(url)
+                log.debug('Org filter - trying: %s', url)
+                try:
+                    content = self._get_content(url)
+                except ContentFetchError, e:
+                    raise GetPkgIdsError(
+                        'Error contacting CKAN concerning the organization '
+                        'filter. URL: "%s" Error: %s' % (url, e))
                 content_json = json.loads(content)
                 result_count = int(content_json['count'])
                 pkg_ids |= set(content_json['results'])
-                while len(pkg_ids) < result_count or not content_json['results']:
+                while len(pkg_ids) < result_count and content_json['results']:
                     url = base_search_url + '/dataset?organization=%s&offset=%s' % (organization, len(pkg_ids))
-                    content = self._get_content(url)
+                    log.debug('Org filter - trying: %s', url)
+                    try:
+                        content = self._get_content(url)
+                    except ContentFetchError, e:
+                        raise GetPkgIdsError(
+                            'Error contacting CKAN concerning the organization'
+                            ' filter. URL: "%s" Error: %s' % (url, e))
                     content_json = json.loads(content)
                     pkg_ids |= set(content_json['results'])
             return pkg_ids
-        include_pkg_ids = get_pkg_ids_for_organizations(org_filter_include)
-        exclude_pkg_ids = get_pkg_ids_for_organizations(org_filter_exclude)
+        try:
+            include_pkg_ids = get_pkg_ids_for_organizations(org_filter_include)
+            exclude_pkg_ids = get_pkg_ids_for_organizations(org_filter_exclude)
+        except GetPkgIdsError, e:
+            self._save_gather_error(str(e), harvest_job)
+            return None
 
         # Under normal circumstances we can just get the packages modified
         # since the last job
@@ -626,4 +650,8 @@ class ContentNotFoundError(ContentFetchError):
 
 
 class RemoteResourceError(Exception):
+    pass
+
+
+class GetPkgIdsError(Exception):
     pass

@@ -187,6 +187,8 @@ def gather_stage(harvester, job):
         # now, so tidy up.
         log.exception(e)
         log.error('Gather exception: %r', e)
+        HarvestGatherError.create(
+            message='System error during harvest: %s' % e, job=job)
         job.status = 'Aborted'
         # Delete any harvest objects else they'd suggest the
         # job is in limbo
