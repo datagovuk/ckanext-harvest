@@ -489,7 +489,7 @@ class TestHarvestQueueBlackBox(object):
         assert_raises(GatherException, self._job_run, source['id'])
         job, source = self._harvest_job_show(), self._harvest_source_show()
         assert job['status'] == 'Aborted'
-        assert_equal(job['stats'], {'added': 0, 'updated': 0, 'not modified': 0, 'errored': 0, 'deleted': 0})
+        assert_equal(job['stats'], {'added': 0, 'updated': 0, 'not modified': 0, 'errored': 1, 'deleted': 0})
         assert source['status']['last_job']['gather_finished']
 
     def test_gather_excepts_after_creating_objects(self):
