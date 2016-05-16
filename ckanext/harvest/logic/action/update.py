@@ -129,6 +129,14 @@ def harvest_source_clear(context, data_dict):
             where harvest_source_id = '{harvest_source_id}');'''.format(
         harvest_source_id=harvest_source_id)
 
+    # DGU only
+    sql += '''
+        delete from harvest_coupled_resource where service_record_package_id in (
+        select id from package where state = 'to_delete');
+        delete from harvest_coupled_resource where dataset_record_package_id in (
+        select id from package where state = 'to_delete');
+    '''
+
     # CKAN-2.3 or above: delete resource views, resource revisions & resources
     if toolkit.check_ckan_version(min_version='2.3'):
         sql += '''
