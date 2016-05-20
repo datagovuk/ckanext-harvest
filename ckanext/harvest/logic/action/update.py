@@ -409,8 +409,8 @@ def _make_scheduled_jobs(context, data_dict):
 
 def harvest_jobs_run(context,data_dict):
     '''
-    Runs scheduled jobs, checks if any jobs need marking as finished, and
-    resubmits queue items if needed.
+    Runs scheduled jobs, checks if any jobs need marking as finished, aborts
+    any duplicate jobs and resubmits queue items if needed.
 
     This should be called every few minutes (e.g. by a cron), or else jobs
     will never show as finished.
@@ -449,6 +449,18 @@ def harvest_jobs_run(context,data_dict):
         for job in jobs:
             if job['gather_finished']:
                 harvest_lib.update_job_status(job, session)
+
+    # Abort any duplicate jobs
+    # (There shouldn't be any in theory but they do crop up)
+    jobs = harvest_job_list(context,
+                            {'source_id': source_id, 'status': u'Running'})
+    duplicate_jobs = jobs[:-1]  # i.e. all but the oldest running one
+    for job in duplicate_jobs:
+        job_obj = HarvestJob.get(job['id'])
+        job_obj.status = u'Aborted'
+        job_obj.save()
+        # If the gather is queued, then it will abort on callback.
+        # Otherwise it will complete the harvest harmlessly
 
     # resubmit old redis tasks
     resubmit_jobs()

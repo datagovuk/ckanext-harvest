@@ -112,6 +112,12 @@ def gather_callback(message_data, message):
             if not job:
                 log.error('Harvest job does not exist: %s' % id)
                 return
+            if job.status != 'Running':
+                if job.status == 'Aborted':
+                    log.info('Harvest job has been aborted: %s' % id)
+                else:
+                    log.error('Harvest job is wrong state: %s' % id)
+                return
 
             # Send the harvest job to the plugins that implement
             # the Harvester interface, only if the source type
