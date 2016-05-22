@@ -124,18 +124,26 @@
               Date: {{h.render_datetime(c.source.status.last_job.created, with_hours=True)}} <br/>
               {% if c.source.status.last_job %}
                 Harvest
-                {% if not c.source.status.running_job%}
-                  complete
-                {% endif %}
-                -
-                <a name="errors"></a>
-                {% if not c.source.status.last_job.stats.get('errored') %}
-                  no errors
+                {% if c.source.status.last_job.status != 'Aborted' %}
+                    {% if not c.source.status.running_job%}
+                        complete
+                    {% endif %}
                 {% else %}
-                  Errors: {{c.source.status.last_job.stats.get('errored', 0)}}</a>
+                    was aborted
                 {% endif %}
-                {% if c.source.status.running_job %}
-                  so far
+
+                <a name="errors"></a>
+                {# aborted jobs are usually aborted before they make it to the gather stage, so don't confuse the user by showing error message or, worse saying 'no errors'. #}
+                {% if c.source.status.last_job.status != 'Aborted' %}
+                  -
+                  {% if not c.source.status.last_job.stats.get('errored') %}
+                    no errors
+                  {% else %}
+                    Errors: {{c.source.status.last_job.stats.get('errored', 0)}}</a>
+                  {% endif %}
+                  {% if c.source.status.running_job %}
+                    so far
+                  {% endif %}
                 {% endif %}
                 <br/>
 
