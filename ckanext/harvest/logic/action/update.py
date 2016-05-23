@@ -455,13 +455,12 @@ def harvest_jobs_run(context,data_dict):
 
     # Abort any duplicate jobs
     # (There shouldn't be any in theory but they do crop up)
-    running_jobs_q = session.query(HarvestJob)
+    query = session.query(HarvestJob)
     if source_id:
-        running_jobs_q = running_jobs_q.filter(HarvestJob.source_id==source_id)
-    running_jobs_q = running_jobs_q.filter(HarvestJob.status=='Running') \
+        query = query.filter(HarvestJob.source_id == source_id)
+    query = query.filter(HarvestJob.status == 'Running') \
         .order_by(HarvestJob.created.desc())
-    running_jobs = running_jobs_q.all()
-
+    running_jobs = query.all()
     # iterate over the sources
     def get_source(job):
         return job.source_id

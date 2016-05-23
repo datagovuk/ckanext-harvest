@@ -103,7 +103,7 @@ def harvest_job_create(context, data_dict):
     job.source = source
 
     job.save()
-    log.info('Harvest job saved %s', job.id)
+    log.info('Harvest job created id=%s', job.id)
 
     if run_it:
         toolkit.get_action('harvest_send_job_to_gather_queue')(
