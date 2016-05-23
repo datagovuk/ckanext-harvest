@@ -23,9 +23,13 @@ from ckanext.harvest.queue import get_gather_publisher, resubmit_jobs
 from ckanext.harvest.model import (HarvestSource, HarvestJob, HarvestObject)
 from ckanext.harvest.logic import HarvestJobExists
 from ckanext.harvest.logic.schema import default_harvest_source_schema
+from ckanext.harvest.logic.dictization import (harvest_source_dictize,
+                                               harvest_job_dictize)
 
 from ckanext.harvest.logic.action.create import _error_summary
-from ckanext.harvest.logic.action.get import harvest_source_show, harvest_job_list, get_sources
+from ckanext.harvest.logic.action.get import (harvest_source_show,
+                                              harvest_job_list,
+                                              get_sources)
 from ckanext.harvest import lib as harvest_lib
 
 
