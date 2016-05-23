@@ -469,9 +469,8 @@ def harvest_jobs_run(context,data_dict):
         # there should only be one job per source
         duplicate_jobs = list(jobs)[:-1]  # i.e. all but the oldest running one
         for job in duplicate_jobs:
-            job_obj = HarvestJob.get(job['id'])
-            job_obj.status = u'Aborted'
-            job_obj.save()
+            job.status = u'Aborted'
+            job.save()
             # If the gather is queued, then it will abort on callback.
             # Otherwise it will complete the harvest harmlessly
 
