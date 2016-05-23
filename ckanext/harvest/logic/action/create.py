@@ -65,7 +65,7 @@ def harvest_job_create(context, data_dict):
 
     May raise NotFound, HarvestSourceInactiveError or HarvestJobExists.
 
-    :param source_id:
+    :param source_id: harvest source name or id
     :type source_id: string
     :param run: whether to also run it or not (default: True)
     :type run: bool
@@ -73,28 +73,30 @@ def harvest_job_create(context, data_dict):
     log.info('Harvest job create: %r', data_dict)
     check_access('harvest_job_create', context, data_dict)
 
-    source_id = data_dict['source_id']
+    source_name_or_id = data_dict['source_id']
     run_it = data_dict.get('run', True)
 
     # Check if source exists
-    source = HarvestSource.by_name_or_id(source_id)
+    source = HarvestSource.by_name_or_id(source_name_or_id)
     if not source:
-        log.warn('Harvest source %s does not exist', source_id)
-        raise toolkit.NotFound('Harvest source %s does not exist' % source_id)
+        log.warn('Harvest source %s does not exist',
+                 source_name_or_id)
+        raise toolkit.NotFound('Harvest source %s does not exist' %
+                               source_name_or_id)
 
     # Check if the source is active
     if not source.active:
         log.warn('Harvest job cannot be created for inactive source %s',
-                 source_id)
+                 source_name_or_id)
         raise HarvestSourceInactiveError('Can not create jobs on inactive '
                                          'sources')
 
     # Check if there already is an unrun or currently running job for this
     # source
-    exists = _check_for_existing_jobs(context, source_id)
+    exists = _check_for_existing_jobs(context, source.id)
     if exists:
         log.warn('There is already an unrun job %r for this source %s',
-                 exists, source.name or source_id)
+                 exists, source_name_or_id)
         raise HarvestJobExists('There already is an unrun job for this source')
 
     job = HarvestJob()
