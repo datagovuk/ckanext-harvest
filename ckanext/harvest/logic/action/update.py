@@ -1,12 +1,12 @@
 import hashlib
-
 import logging
 import datetime
+from itertools import groupby
+
 from pylons import config
 from paste.deploy.converters import asbool
 from sqlalchemy import or_
 
-from ckan.lib.search.index import PackageSearchIndex
 from ckan.plugins import PluginImplementations
 from ckan.logic import get_action
 from ckanext.harvest.interfaces import IHarvester
@@ -23,7 +23,6 @@ from ckanext.harvest.queue import get_gather_publisher, resubmit_jobs
 from ckanext.harvest.model import (HarvestSource, HarvestJob, HarvestObject)
 from ckanext.harvest.logic import HarvestJobExists
 from ckanext.harvest.logic.schema import default_harvest_source_schema
-from ckanext.harvest.logic.dictization import harvest_source_dictize, harvest_job_dictize
 
 from ckanext.harvest.logic.action.create import _error_summary
 from ckanext.harvest.logic.action.get import harvest_source_show, harvest_job_list, get_sources
@@ -452,15 +451,26 @@ def harvest_jobs_run(context,data_dict):
 
     # Abort any duplicate jobs
     # (There shouldn't be any in theory but they do crop up)
-    jobs = harvest_job_list(context,
-                            {'source_id': source_id, 'status': u'Running'})
-    duplicate_jobs = jobs[:-1]  # i.e. all but the oldest running one
-    for job in duplicate_jobs:
-        job_obj = HarvestJob.get(job['id'])
-        job_obj.status = u'Aborted'
-        job_obj.save()
-        # If the gather is queued, then it will abort on callback.
-        # Otherwise it will complete the harvest harmlessly
+    running_jobs_q = session.query(HarvestJob)
+    if source_id:
+        running_jobs_q = running_jobs_q.filter(HarvestJob.source_id==source_id)
+    running_jobs_q = running_jobs_q.filter(HarvestJob.status=='Running') \
+        .order_by(HarvestJob.created.desc())
+    running_jobs = running_jobs_q.all()
+
+    # iterate over the sources
+    def get_source(job):
+        return job.source_id
+    for source_id, jobs in groupby(sorted(running_jobs, key=get_source),
+                                   get_source):
+        # there should only be one job per source
+        duplicate_jobs = list(jobs)[:-1]  # i.e. all but the oldest running one
+        for job in duplicate_jobs:
+            job_obj = HarvestJob.get(job['id'])
+            job_obj.status = u'Aborted'
+            job_obj.save()
+            # If the gather is queued, then it will abort on callback.
+            # Otherwise it will complete the harvest harmlessly
 
     # resubmit old redis tasks
     resubmit_jobs()
