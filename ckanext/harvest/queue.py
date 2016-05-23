@@ -110,7 +110,7 @@ def gather_callback(message_data, message):
     try:
         try:
             if not job:
-                log.error('Harvest job does not exist: %s' % id)
+                log.error('Harvest job does not exist: %s', id)
                 return
 
             # Send the harvest job to the plugins that implement
