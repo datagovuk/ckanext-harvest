@@ -467,7 +467,9 @@ def harvest_jobs_run(context,data_dict):
     for source_id, jobs in groupby(sorted(running_jobs, key=get_source),
                                    get_source):
         # there should only be one job per source
-        duplicate_jobs = list(jobs)[:-1]  # i.e. all but the oldest running one
+        # Keep the most recently created job - that is the one that is
+        # displayed in the harvest read page. (harvest_source_show_job_status)
+        duplicate_jobs = list(jobs)[1:]  # i.e. all but the newest
         for job in duplicate_jobs:
             job.status = u'Aborted'
             job.save()
