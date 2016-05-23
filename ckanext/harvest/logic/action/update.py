@@ -1,12 +1,12 @@
 import hashlib
-
 import logging
 import datetime
+from itertools import groupby
+
 from pylons import config
 from paste.deploy.converters import asbool
 from sqlalchemy import or_
 
-from ckan.lib.search.index import PackageSearchIndex
 from ckan.plugins import PluginImplementations
 from ckan.logic import get_action
 from ckanext.harvest.interfaces import IHarvester
@@ -23,10 +23,13 @@ from ckanext.harvest.queue import get_gather_publisher, resubmit_jobs
 from ckanext.harvest.model import (HarvestSource, HarvestJob, HarvestObject)
 from ckanext.harvest.logic import HarvestJobExists
 from ckanext.harvest.logic.schema import default_harvest_source_schema
-from ckanext.harvest.logic.dictization import harvest_source_dictize, harvest_job_dictize
+from ckanext.harvest.logic.dictization import (harvest_source_dictize,
+                                               harvest_job_dictize)
 
 from ckanext.harvest.logic.action.create import _error_summary
-from ckanext.harvest.logic.action.get import harvest_source_show, harvest_job_list, get_sources
+from ckanext.harvest.logic.action.get import (harvest_source_show,
+                                              harvest_job_list,
+                                              get_sources)
 from ckanext.harvest import lib as harvest_lib
 
 
@@ -409,8 +412,8 @@ def _make_scheduled_jobs(context, data_dict):
 
 def harvest_jobs_run(context,data_dict):
     '''
-    Runs scheduled jobs, checks if any jobs need marking as finished, and
-    resubmits queue items if needed.
+    Runs scheduled jobs, checks if any jobs need marking as finished, aborts
+    any duplicate jobs and resubmits queue items if needed.
 
     This should be called every few minutes (e.g. by a cron), or else jobs
     will never show as finished.
@@ -449,6 +452,28 @@ def harvest_jobs_run(context,data_dict):
         for job in jobs:
             if job['gather_finished']:
                 harvest_lib.update_job_status(job, session)
+
+    # Abort any duplicate jobs
+    # (There shouldn't be any in theory but they do crop up)
+    query = session.query(HarvestJob)
+    if source_id:
+        query = query.filter(HarvestJob.source_id == source_id)
+    query = query.filter(HarvestJob.status == 'Running') \
+        .order_by(HarvestJob.created.desc())
+    running_jobs = query.all()
+    # iterate over the sources
+    def get_source(job):
+        return job.source_id
+    for source_id, jobs in groupby(sorted(running_jobs, key=get_source),
+                                   get_source):
+        # there should only be one job per source
+        duplicate_jobs = list(jobs)[:-1]  # i.e. all but the oldest running one
+        for job in duplicate_jobs:
+            job_obj = HarvestJob.get(job['id'])
+            job_obj.status = u'Aborted'
+            job_obj.save()
+            # If the gather is queued, then it will abort on callback.
+            # Otherwise it will complete the harvest harmlessly
 
     # resubmit old redis tasks
     resubmit_jobs()
