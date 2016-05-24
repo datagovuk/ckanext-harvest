@@ -11,7 +11,6 @@ and adds a CLI and a WUI to CKAN to manage harvesting sources and jobs.
 **DGU fork** This fork deviates form mainline in the following ways:
 
 * HarvestSource is not stored in SOLR as a Package - would probably need to filter these out of lots of places in DGU to do this. Also I'm not convinced it is a good direction, since it is not a Package/Dataset, so needs another name.
-* still using carrot instead of pika - still to check it works on rabbitmq
 * harvest source requires a publisher_id
 * CKANHarvester uses the DguHarvestBase to add theme etc. - need to resolve whether this is good direction for mainline to go down.
 * get_object_report_statuses is factored out so that it can be added to debug.
@@ -21,24 +20,81 @@ and adds a CLI and a WUI to CKAN to manage harvesting sources and jobs.
 Installation
 ============
 
-The harvest extension uses Message Queuing to handle the different gather
-stages.
+This extension requires CKAN v2.0 or later on both the CKAN it is installed
+into and the CKANs it harvests. However you are unlikely to encounter a CKAN
+running a version lower than 2.0.
 
-You will need to install the RabbitMQ server::
+1. The harvest extension can use two different backends. You can choose whichever
+   you prefer depending on your needs, but Redis has been found to be more stable
+   and reliable so it is the recommended one:
 
-    sudo apt-get install rabbitmq-server
+   * `Redis <http://redis.io/>`_ (recommended): To install it, run::
 
-Clone the repository and set up the extension::
+      sudo apt-get install redis-server
 
-    git clone https://github.com/okfn/ckanext-harvest
-    cd ckanext-harvest
-    pip install -r pip-requirements.txt
-    python setup.py develop
+     On your CKAN configuration file, add::
 
-Make sure the CKAN configuration ini file contains the harvest main plugin, as
-well as the harvester for CKAN instances (included with the extension)::
+      ckan.harvest.mq.type = redis
 
-    ckan.plugins = harvest ckan_harvester
+   * `RabbitMQ <http://www.rabbitmq.com/>`_: To install it, run::
+
+      sudo apt-get install rabbitmq-server
+
+     On your CKAN configuration file, add::
+
+      ckan.harvest.mq.type = amqp
+
+2. Activate your CKAN virtual environment, for example::
+
+     $ . /usr/lib/ckan/default/bin/activate
+
+3. Install the ckanext-harvest Python package into your virtual environment::
+
+     (pyenv) $ pip install -e git+https://github.com/ckan/ckanext-harvest.git#egg=ckanext-harvest
+
+4. Install the python modules required by the extension::
+
+     (pyenv) $ pip install -r pip-requirements.txt
+
+5. Make sure the CKAN configuration ini file contains the harvest main plugin, as
+   well as the harvester for CKAN instances if you need it (included with the extension)::
+
+     ckan.plugins = harvest ckan_harvester
+
+6. If you haven't done it yet on the previous step, define the backend that you
+   are using with the ``ckan.harvest.mq.type`` option (it defaults to ``amqp``)::
+
+     ckan.harvest.mq.type = redis
+
+
+There are a number of configuration options available for the backends. These don't need to
+be modified at all if you are using the default Redis or RabbitMQ install (step 1). The list
+below shows the available options and their default values:
+
+    * Redis:
+        - ``ckan.harvest.mq.hostname`` (localhost)
+        - ``ckan.harvest.mq.port`` (6379)
+        - ``ckan.harvest.mq.redis_db`` (0)
+
+    * RabbitMQ:
+        - ``ckan.harvest.mq.user_id`` (guest)
+        - ``ckan.harvest.mq.password`` (guest)
+        - ``ckan.harvest.mq.hostname`` (localhost)
+        - ``ckan.harvest.mq.port`` (5672)
+        - ``ckan.harvest.mq.virtual_host`` (/)
+
+
+**Note**: it is safe to use the same backend server (either Redis or RabbitMQ)
+for different CKAN instances, as long as they have different site ids. The ``ckan.site_id``
+config option (or ``default``) will be used to namespace the relevant things:
+
+* On RabbitMQ it will be used to name the queues used, eg ``ckan.harvest.site1.gather`` and
+  ``ckan.harvest.site1.fetch``.
+
+* On Redis, it will namespace the keys used, so only the relevant instance gets them, eg
+  ``site1:harvest_job_id``,  ``site1:harvest_object__id:804f114a-8f68-4e7c-b124-3eb00f66202f``
+
+
 
 
 Configuration
@@ -105,33 +161,6 @@ The commands should be run with the pyenv activated and refer to your sites conf
 
         paster --plugin=ckanext-harvest harvester sources --config=mysite.ini
 
-Authorization Profiles
-======================
-
-Starting from CKAN 1.6.1, the harvester extension offers the ability to use
-different authorization profiles. These can be defined in your ini file as::
-
-    ckan.harvest.auth.profile = <profile_name>
-
-The two available profiles right now are:
-
-* `default`: This is the default profile, the same one that this extension has
-  used historically. Basically, only sysadmins can manage anything related to
-  harvesting, including creating and editing harvest sources or running harvest
-  jobs.
-
-* `publisher`: When using this profile, sysadmins can still perform any
-  harvesting related action, but in addition, users belonging to a publisher
-  (with role `admin`) can manage and run their own harvest sources and jobs.
-  Note that this requires CKAN core to also use the `publisher` authorization
-  profile, i.e you will also need to add::
-
-    ckan.auth.profile = publisher
-
-To know more about the CKAN publisher auth profile, visit:
-
- http://oldwiki.ckan.org/Working_with_the_publisher_auth_profile
-
 
 The CKAN harvester
 ===================
@@ -147,8 +176,8 @@ The CKAN harvesters support a number of configuration options to control their
 behaviour. Those need to be defined as a JSON object in the configuration form
 field. The currently supported configuration options are:
 
-*   api_version: You can force the harvester to use either version '1' or '2' of
-    the CKAN API. Default is '2'.
+*   api_version: You can force the harvester to use either version 1 or 2 of
+    the CKAN API. Default is 2.
 
 *   default_tags: A list of tags that will be added to all harvested datasets.
     Tags don't need to previously exist.
@@ -156,16 +185,12 @@ field. The currently supported configuration options are:
 *   default_groups: A list of groups to which the harvested datasets will be
     added to. The groups must exist. Note that you must use ids or names to
     define the groups according to the API version you defined (names for version
-    '1', ids for version '2').
-
-*   default_extras: A dictionary of key value pairs that will be added to extras
-    of the harvested datasets. You can use the following replacement strings,
-    that will be replaced before creating or updating the datasets:
+    1, ids for version 2).
 
     * {dataset_id}
     * {harvest_source_id}
     * {harvest_source_url}   # Will be stripped of trailing forward slashes (/)
-    * {harvest_source_title}   # Requires CKAN 1.6
+    * {harvest_source_title}
     * {harvest_job_id}
     * {harvest_object_id}
 
@@ -210,7 +235,7 @@ Here is an example of a configuration object (the one that must be entered in
 the configuration field)::
 
     {
-     "api_version":"1",
+     "api_version": 1,
      "default_tags":["new-tag-1","new-tag-2"],
      "default_groups":["my-own-group"],
      "default_extras":{"new_extra":"Test","harvest_url":"{harvest_source_url}/dataset/{dataset_id}"},
@@ -388,17 +413,47 @@ interface:
 
 Here you can also find other examples of custom harvesters:
 
-* https://github.com/okfn/ckanext-pdeu/tree/master/ckanext/pdeu/harvesters
-* https://github.com/okfn/ckanext-inspire/ckanext/inspire/harvesters.py
+* https://github.com/ckan/ckanext-dcat/tree/master/ckanext/dcat/harvesters
+* https://github.com/ckan/ckanext-spatial/tree/master/ckanext/spatial/harvesters
 
 
 Running the harvest jobs
 ========================
 
-The harvesting extension uses two different queues, one that handles the
-gathering and another one that handles the fetching and importing. To start
-the consumers run the following command
-(make sure you have your python environment activated)::
+There are two ways to run a harvest::
+
+    1. ``harvester run_test`` for the command-line, suitable for testing
+    2. ``harvester run`` used by the Web UI and scheduled runs
+
+harvester run_test
+------------------
+
+You can run a harvester simply using the ``run_test`` command. This is handy
+for running a harvest with one command in the console and see all the output
+in-line. It runs the gather, fetch and import stages all in the same process.
+
+This is useful for developing a harvester because you can insert break-points
+in your harvester, and rerun a harvest without having to restart the
+gather_consumer and fetch_consumer processes each time. In addition, because it
+doesn't use the queue backends it doesn't interfere with harvests of other
+sources that may be going on in the background.
+
+However running this way, if gather_stage, fetch_stage or import_stage raise an
+exception, they are not caught, whereas with ``harvester run`` they are handled
+slightly differently as they are called by queue.py. So when testing this
+aspect its best to use ``harvester run``.
+
+harvester run
+-------------
+
+When a harvest job is started by a user in the Web UI, or by a scheduled
+harvest, the harvest is started by the ``harvester run`` command. This is the
+normal method in production systems and scales well.
+
+In this case, the harvesting extension uses two different queues: one that
+handles the gathering and another one that handles the fetching and importing.
+To start the consumers run the following command (make sure you have your
+python environment activated)::
 
       paster --plugin=ckanext-harvest harvester gather_consumer --config=mysite.ini
 
@@ -411,11 +466,23 @@ pending harvesting jobs::
 
       paster --plugin=ckanext-harvest harvester run --config=mysite.ini
 
-Note: If you don't have the `synchronous_search` plugin loaded, you will need
-to update the search index after the harvesting in order for the packages to
-appear in search results::
+The ``run`` command not only starts any pending harvesting jobs, but also
+flags those that are finished, allowing new jobs to be created on that particular
+source and refreshing the source statistics. That means that you will need to run
+this command before being able to create a new job on a source that was being
+harvested. (On a production site you will typically have a cron job that runs the
+command regularly, see next section).
 
-      paster --plugin=ckan search-index rebuild
+Occasionally you can find a harvesting job is in a "limbo state" where the job
+has run with errors but the ``harvester run`` command will not mark it as
+finished, and therefore you cannot run another job. This is due to particular
+harvester not handling errors correctly e.g. during development. In this
+circumstance, ensure that the gather & fetch consumers are running and have
+nothing more to consume, and then run this abort command with the name or id of
+the harvest source::
+
+      paster --plugin=ckanext-harvest harvester job_abort {source-id/name} --config=mysite.ini
+
 
 
 Setting up the harvesters on a production server
@@ -435,7 +502,7 @@ have already installed and configured the harvesting extension (See
 `Installation` if not).
 
 Note: It is recommended to run the harvest process from a non-root user
-(generally the one you are running CKAN with). Replace the user `okfn` in the
+(generally the one you are running CKAN with). Replace the user `ckan` in the
 following steps with the one you are using.
 
 1. Install Supervisor::
@@ -454,7 +521,8 @@ following steps with the one you are using.
    describe the tasks that need to be monitored. This configuration files are
    stored in ``/etc/supervisor/conf.d``.
 
-   Create a file named ``/etc/supervisor/conf.d/ckan_harvesting.conf``, and copy the following contents::
+   Create a file named ``/etc/supervisor/conf.d/ckan_harvesting.conf``, and
+   copy the following contents::
 
 
         ; ===============================
@@ -463,10 +531,10 @@ following steps with the one you are using.
 
         [program:ckan_gather_consumer]
 
-        command=/var/lib/ckan/std/pyenv/bin/paster --plugin=ckanext-harvest harvester gather_consumer --config=/etc/ckan/std/std.ini
+        command=/usr/lib//ckan/default/bin/paster --plugin=ckanext-harvest harvester gather_consumer --config=/etc/ckan/std/std.ini
 
         ; user that owns virtual environment.
-        user=okfn
+        user=ckan
 
         numprocs=1
         stdout_logfile=/var/log/ckan/std/gather_consumer.log
@@ -477,10 +545,10 @@ following steps with the one you are using.
 
         [program:ckan_fetch_consumer]
 
-        command=/var/lib/ckan/std/pyenv/bin/paster --plugin=ckanext-harvest harvester fetch_consumer --config=/etc/ckan/std/std.ini
+        command=/usr/lib//ckan/default/bin/paster --plugin=ckanext-harvest harvester fetch_consumer --config=/etc/ckan/std/std.ini
 
         ; user that owns virtual environment.
-        user=okfn
+        user=ckan
 
         numprocs=1
         stdout_logfile=/var/log/ckan/std/fetch_consumer.log
@@ -543,19 +611,64 @@ following steps with the one you are using.
    that will run the `run` harvester command periodically. To do so, edit the cron table with
    the following command (it may ask you to choose an editor)::
 
-    sudo crontab -e -u okfn
+    sudo crontab -e -u ckan
 
-   Note that we are running this command as the same user we configured the processes to be run with
-   (`okfn` in our example).
+   Note that we are running this command as the same user we configured the
+   processes to be run with (`ckan` in our example).
 
-   Paste this line into your crontab, again replacing the paths to paster and the ini file with yours::
+   Paste this line into your crontab, again replacing the paths to paster and
+   the ini file with yours::
 
     # m  h  dom mon dow   command
-    */15 *  *   *   *     /var/lib/ckan/std/pyenv/bin/paster --plugin=ckanext-harvest harvester run --config=/etc/ckan/std/std.ini
+    */15 *  *   *   *     /usr/lib/ckan/default/bin/paster --plugin=ckanext-harvest harvester run --config=/etc/ckan/std/std.ini
 
    This particular example will check for pending jobs every fifteen minutes.
    You can of course modify this periodicity, this `Wikipedia page <http://en.wikipedia.org/wiki/Cron#CRON_expression>`_
    has a good overview of the crontab syntax.
+
+Tests
+=====
+
+You can run the tests like this:
+
+    cd ckanext-harvest
+    nosetests --reset-db --ckan --with-pylons=test-core.ini ckanext/harvest/tests
+
+Here are some common errors and solutions:
+
+* ``(OperationalError) no such table: harvest_object_error u'delete from "harvest_object_error"``
+  The database has got into in a bad state. Run the tests again but with the ``--reset-db`` parameter.
+
+* ``(ProgrammingError) relation "harvest_object_extra" does not exist``
+  The database has got into in a bad state. Run the tests again but *without* the ``--reset-db`` parameter.
+
+* ``(OperationalError) near "SET": syntax error``
+  You are testing with SQLite as the database, but the CKAN Harvester needs PostgreSQL. Specify test-core.ini instead of test.ini.
+
+
+Community
+=========
+
+* Developer mailing list: `ckan-dev@lists.okfn.org <http://lists.okfn.org/mailman/listinfo/ckan-dev>`_
+* Developer IRC channel: `#ckan on irc.freenode.net <http://webchat.freenode.net/?channels=ckan>`_
+* `Issue tracker <https://github.com/ckan/ckanext-harvest/issues>`_
+
+
+Contributing
+============
+
+For contributing to ckanext-spatial or its documentation, follow the same
+guidelines that apply to CKAN core, described in
+`CONTRIBUTING <https://github.com/ckan/ckan/blob/master/CONTRIBUTING.rst>`_.
+
+
+License
+=======
+
+This extension is open and licensed under the GNU Affero General Public License (AGPL) v3.0.
+Its full text may be found at:
+
+http://www.fsf.org/licensing/licenses/agpl-3.0.html
 
 
 .. _Supervisor: http://supervisord.org
