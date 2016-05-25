@@ -110,7 +110,8 @@ def purge_queues():
 
 def resubmit_jobs():
     '''
-    Examines the fetch and gather queues for items that are suspiciously old.
+    Examines the fetch and gather queues for items that are supposedly
+    currently being processed (persistence keys) that are suspiciously old.
     These are removed from the queues and placed back on them afresh, to ensure
     the fetch & gather consumers are triggered to process it.
     '''
@@ -123,11 +124,15 @@ def resubmit_jobs():
     for key in harvest_object_pending:
         date_of_key = datetime.datetime.strptime(redis.get(key),
                                                  "%Y-%m-%d %H:%M:%S.%f")
-        # 3 minutes for fetch and import max
-        if (datetime.datetime.now() - date_of_key).seconds > 180:
+        # 3 minutes max for fetch and import
+        age = (datetime.datetime.utcnow() - date_of_key).seconds
+        if age > 180:
+            ho_id = key.split(':')[-1]
+            log.info('Resubmitting to fetch queue harvest object id=%s '
+                     'age=%ss',
+                     ho_id, age)
             redis.rpush(get_fetch_routing_key(),
-                json.dumps({'harvest_object_id': key.split(':')[-1]})
-            )
+                        json.dumps({'harvest_object_id': ho_id}))
             redis.delete(key)
 
     # gather queue
@@ -135,11 +140,14 @@ def resubmit_jobs():
     for key in harvest_jobs_pending:
         date_of_key = datetime.datetime.strptime(redis.get(key),
                                                  "%Y-%m-%d %H:%M:%S.%f")
-        # 3 hours for a gather
-        if (datetime.datetime.now() - date_of_key).seconds > 7200:
+        # 3 hours max for a gather
+        age = (datetime.datetime.utcnow() - date_of_key).seconds
+        if age > 7200:
+            job_id = key.split(':')[-1]
+            log.info('Resubmitting to gather queue harvest job id=%s age=%ss',
+                     job_id, age)
             redis.rpush(get_gather_routing_key(),
-                json.dumps({'harvest_job_id': key.split(':')[-1]})
-            )
+                        json.dumps({'harvest_job_id': job_id}))
             redis.delete(key)
 
 
@@ -207,19 +215,23 @@ class RedisConsumer(object):
     def consume(self, queue):
         while True:
             key, body = self.redis.blpop(self.routing_key)
-            self.redis.set(self.persistance_key(body),
-                           str(datetime.datetime.now()))
+            # Create a 'persistence key' to show we are currently
+            # processing a particular item in the main queues,
+            # which will get deleted again on ack. If an error
+            # causes it to be left around, then resubmit kicks in.
+            self.redis.set(self._persistence_key(body),
+                           str(datetime.datetime.utcnow()))
             yield (FakeMethod(body), self, body)
 
-    def persistance_key(self, message):
-        # Persistance keys are constructed with
+    def _persistence_key(self, message):
+        # Persistence keys are constructed with
         # {site-id}:{message-key}:{object-id}, eg:
         # default:harvest_job_id:804f114a-8f68-4e7c-b124-3eb00f66202e
         message = json.loads(message)
         return self.routing_key + ':' + message[self.message_key]
 
     def basic_ack(self, message):
-        self.redis.delete(self.persistance_key(message))
+        self.redis.delete(self._persistence_key(message))
 
     def queue_purge(self, queue):
         self.redis.flushdb()
@@ -274,67 +286,62 @@ def gather_callback(channel, method, header, body):
         return
 
     try:
-        try:
-            if not job:
-                log.error('Harvest job does not exist: %s', id)
-                return
+        if not job:
+            log.error('Harvest job does not exist: %s', id)
+            return
 
-            if job.status != 'Running':
-                if job.status == 'Aborted':
-                    log.info('Harvest job has been aborted: %s', id)
-                else:
-                    log.error('Harvest job invalid - '
-                              'status should be "Running" but was %s '
-                              'id=%s created=%s',
-                              job.status, id, str(job.created))
-                return
-
-            # Send the harvest job to the plugins that implement
-            # the Harvester interface, only if the source type
-            # matches
-            harvester = get_harvester(job.source.type)
-            if harvester:
-                try:
-                    harvest_object_ids = gather_stage(harvester, job)
-                except (Exception, KeyboardInterrupt):
-                    raise
-
-                if not isinstance(harvest_object_ids, list):
-                    log.error('Gather stage failed')
-                    publisher.close()
-                    return False  # not sure the False does anything
-
-                if len(harvest_object_ids) == 0:
-                    log.info('No harvest objects to fetch')
-                    publisher.close()
-                    return False  # not sure the False does anything
-
-                log.debug('Received from plugin gather_stage, to send to fetch queue: {0} objects (first ho id: {1} last: {2})'.format(
-                          len(harvest_object_ids), harvest_object_ids[:1], harvest_object_ids[-1:]))
-                for id in harvest_object_ids:
-                    # Send the id to the fetch queue
-                    publisher.send({'harvest_object_id':id})
-                log.debug('Sent {0} objects to the fetch queue'.format(len(harvest_object_ids)))
-
-
+        if job.status != 'Running':
+            if job.status == 'Aborted':
+                log.info('Harvest job has been aborted: %s', id)
             else:
-                # This can occur if you:
-                # * remove a harvester and it still has sources that are then
-                #   refreshed
-                # * add a new harvester and restart CKAN but not the gather
-                #   queue.
-                msg = 'System error - no harvester could be found for source'\
-                      ' type %s' % job.source.type
-                HarvestGatherError.create(message=msg, job=job)
-                log.error(msg)
-                job.status = 'Aborted'
-                job.save()
+                log.error('Harvest job invalid - '
+                          'status should be "Running" but was %s '
+                          'id=%s created=%s',
+                          job.status, id, str(job.created))
+            return
 
-        finally:
-            model.Session.remove()
-            publisher.close()
+        # Send the harvest job to the plugins that implement
+        # the Harvester interface, only if the source type
+        # matches
+        harvester = get_harvester(job.source.type)
+        if harvester:
+            try:
+                harvest_object_ids = gather_stage(harvester, job)
+            except (Exception, KeyboardInterrupt):
+                raise
+
+            if not isinstance(harvest_object_ids, list):
+                log.error('Gather stage failed')
+                return False  # not sure the False does anything
+
+            if len(harvest_object_ids) == 0:
+                log.info('No harvest objects to fetch')
+                return False  # not sure the False does anything
+
+            log.debug('Received from plugin gather_stage, to send to fetch queue: {0} objects (first ho id: {1} last: {2})'.format(
+                      len(harvest_object_ids), harvest_object_ids[:1], harvest_object_ids[-1:]))
+            for id in harvest_object_ids:
+                # Send the id to the fetch queue
+                publisher.send({'harvest_object_id': id})
+            log.debug('Sent {0} objects to the fetch queue'.format(
+                len(harvest_object_ids)))
+
+        else:
+            # This can occur if you:
+            # * remove a harvester and it still has sources that are then
+            #   refreshed
+            # * add a new harvester and restart CKAN but not the gather
+            #   queue.
+            msg = 'System error - no harvester could be found for source'\
+                  ' type %s' % job.source.type
+            HarvestGatherError.create(message=msg, job=job)
+            log.error(msg)
+            job.status = 'Aborted'
+            job.save()
 
     finally:
+        model.Session.remove()
+        publisher.close()
         channel.basic_ack(method.delivery_tag)
 
 
