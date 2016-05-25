@@ -22,12 +22,6 @@ get_action = tk.get_action
 import logging
 log = logging.getLogger(__name__)
 
-# Get message off a carrot queue
-def pop(consumer):
-    message = consumer.fetch()
-    assert message
-    return message.payload, message
-
 
 class MockHarvester(SingletonPlugin):
     implements(IHarvester)
@@ -111,14 +105,12 @@ class TestHarvestQueue(object):
     def test_01_basic_harvester(self):
 
         ### make sure queues/exchanges are created first and are empty
-        consumer = queue.get_consumer('ckan.harvest.gather','harvest_job_id')
-        consumer_fetch = queue.get_consumer('ckan.harvest.fetch','harvest_object_id')
-        # DGU Hack - equivalent for carrot
-        connection = queue.get_carrot_connection()
-        connection.get_channel().queue_purge('ckan.harvest.gather')
-        connection.get_channel().queue_purge('ckan.harvest.fetch')
-        #consumer.queue_purge(queue='ckan.harvest.gather')
-        #consumer_fetch.queue_purge(queue='ckan.harvest.fetch')
+        consumer = queue.get_consumer('ckan.harvest.test.gather',
+                                      queue.get_gather_routing_key())
+        consumer_fetch = queue.get_consumer('ckan.harvest.test.fetch',
+                                            queue.get_fetch_routing_key())
+        consumer.queue_purge(queue='ckan.harvest.test.gather')
+        consumer_fetch.queue_purge(queue='ckan.harvest.test.fetch')
 
         factories.Organization(name='testorg')
 
@@ -167,13 +159,12 @@ class TestHarvestQueue(object):
         )['status'] == u'Running'
 
         ## pop on item off the queue and run the callback
-        #DGU HACKS
-        #reply = consumer.basic_get(queue='ckan.harvest.gather')
-        queue.gather_callback(*pop(consumer))
+        reply = consumer.basic_get(queue='ckan.harvest.gather')
+        queue.gather_callback(consumer, *reply)
 
         all_objects = model.Session.query(HarvestObject).all()
 
-        assert len(all_objects) == 3
+        assert_equal(len(all_objects), 3)
         assert all_objects[0].state == 'WAITING'
         assert all_objects[1].state == 'WAITING'
         assert all_objects[2].state == 'WAITING'
@@ -183,9 +174,12 @@ class TestHarvestQueue(object):
         assert len(model.Session.query(HarvestObjectExtra).all()) == 1
 
         ## do three times as three harvest objects
-        queue.fetch_callback(*pop(consumer_fetch))
-        queue.fetch_callback(*pop(consumer_fetch))
-        queue.fetch_callback(*pop(consumer_fetch))
+        reply = consumer_fetch.basic_get(queue='ckan.harvest.fetch')
+        queue.fetch_callback(consumer_fetch, *reply)
+        reply = consumer_fetch.basic_get(queue='ckan.harvest.fetch')
+        queue.fetch_callback(consumer_fetch, *reply)
+        reply = consumer_fetch.basic_get(queue='ckan.harvest.fetch')
+        queue.fetch_callback(consumer_fetch, *reply)
 
         count = model.Session.query(model.Package) \
                 .filter(model.Package.type=='dataset') \
@@ -239,29 +233,33 @@ class TestHarvestQueue(object):
         )['status'] == u'Running'
 
         ## pop on item off the queue and run the callback
-        queue.gather_callback(*pop(consumer))
+        reply = consumer.basic_get(queue='ckan.harvest.gather')
+        queue.gather_callback(consumer, *reply)
 
         all_objects = model.Session.query(HarvestObject).all()
 
         assert len(all_objects) == 6
 
-        queue.fetch_callback(*pop(consumer_fetch))
-        queue.fetch_callback(*pop(consumer_fetch))
-        queue.fetch_callback(*pop(consumer_fetch))
+        reply = consumer_fetch.basic_get(queue='ckan.harvest.fetch')
+        queue.fetch_callback(consumer_fetch, *reply)
+        reply = consumer_fetch.basic_get(queue='ckan.harvest.fetch')
+        queue.fetch_callback(consumer_fetch, *reply)
+        reply = consumer_fetch.basic_get(queue='ckan.harvest.fetch')
+        queue.fetch_callback(consumer_fetch, *reply)
 
         count = model.Session.query(model.Package) \
                 .filter(model.Package.type=='dataset') \
                 .count()
-        assert count == 3
+        assert_equal(count, 3)
 
         all_objects = model.Session.query(HarvestObject).filter_by(report_status='added').all()
-        assert len(all_objects) == 3, len(all_objects)
+        assert_equal(len(all_objects), 3)
 
         all_objects = model.Session.query(HarvestObject).filter_by(report_status='updated').all()
-        assert len(all_objects) == 2, len(all_objects)
+        assert_equal(len(all_objects), 2)
 
         all_objects = model.Session.query(HarvestObject).filter_by(report_status='not modified').all()
-        assert len(all_objects) == 1, len(all_objects)
+        assert_equal(len(all_objects), 1)
 
         # run to make sure job is marked as finshed
         logic.get_action('harvest_jobs_run')(
@@ -349,24 +347,23 @@ class TestHarvestQueueBlackBox(object):
 
     @classmethod
     def _empty_the_queues(cls):
-        ### make sure queues/exchanges are created first and are empty
-        gather_consumer = queue.get_consumer('ckan.harvest.gather','harvest_job_id')
-        fetch_consumer = queue.get_consumer('ckan.harvest.fetch','harvest_object_id')
-        # DGU Hack - equivalent for carrot
-        connection = queue.get_carrot_connection()
-        connection.get_channel().queue_purge('ckan.harvest.gather')
-        connection.get_channel().queue_purge('ckan.harvest.fetch')
-        #gather_consumer.queue_purge(queue='ckan.harvest.gather')
-        #fetch_consumer.queue_purge(queue='ckan.harvest.fetch')
+        consumer = queue.get_consumer('ckan.harvest.test.gather',
+                                      queue.get_gather_routing_key())
+        consumer_fetch = queue.get_consumer('ckan.harvest.test.fetch',
+                                            queue.get_fetch_routing_key())
+        consumer.queue_purge(queue='ckan.harvest.test.gather')
+        consumer_fetch.queue_purge(queue='ckan.harvest.test.fetch')
 
     def _assert_queues_are_empty(self):
-        gather_consumer = queue.get_consumer('ckan.harvest.gather','harvest_job_id')
-        fetch_consumer = queue.get_consumer('ckan.harvest.fetch','harvest_object_id')
-        for queue_name, consumer in (('gather', gather_consumer),
-                                     ('fetch', fetch_consumer)):
-            msg = consumer.fetch()
-            assert not msg, 'Did not expect message on %s queue: %s' % \
-                (queue_name, msg)
+        consumer_gather = queue.get_consumer('ckan.harvest.test.gather',
+                                             queue.get_gather_routing_key())
+        consumer_fetch = queue.get_consumer('ckan.harvest.test.fetch',
+                                            queue.get_fetch_routing_key())
+        for queue_name, consumer in (('ckan.harvest.test.gather', consumer_gather),
+                                     ('ckan.harvest.test.fetch', consumer_fetch)):
+            msg = consumer.basic_get(queue=queue_name)
+            assert not msg[2], 'Did not expect message on %s queue: %s' % \
+                (queue_name, msg[2])
 
     def _create_source(self, url, source_type='bad'):
         factories.Organization(name='testorg')
@@ -411,21 +408,23 @@ class TestHarvestQueueBlackBox(object):
 
         # gather
         log.info('Gather')
-        gather_consumer = queue.get_consumer('ckan.harvest.gather', 'harvest_job_id')
-        message = gather_consumer.fetch()
-        if not message:
+        consumer = queue.get_consumer('ckan.harvest.test.gather',
+                                      queue.get_gather_routing_key())
+        message = consumer.basic_get(queue='ckan.harvest.gather')
+        if not message[2]:
             log.error('Could not get gather message - probably because the gather process is running elsewhere.')
             assert 0, 'No gather message'
-        queue.gather_callback({'harvest_job_id': job['id']}, message)
+        queue.gather_callback(consumer, *message)
 
         # fetch
         logging.getLogger('ckan.cli').info('Fetch')
-        fetch_consumer = queue.get_consumer('ckan.harvest.fetch', 'harvest_object_id')
+        consumer_fetch = queue.get_consumer('ckan.harvest.test.fetch',
+                                            queue.get_fetch_routing_key())
         while True:
-            message = fetch_consumer.fetch()
-            if not message:
+            message = consumer_fetch.basic_get(queue='ckan.harvest.fetch')
+            if not message[2]:
                 break
-            queue.fetch_callback(message.payload, message)
+            queue.fetch_callback(consumer_fetch, *message)
 
         # run - mark the job as finished
         get_action('harvest_jobs_run')(context, {'source_id': source['id']})
