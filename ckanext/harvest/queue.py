@@ -100,10 +100,13 @@ def purge_queues():
         log.info('AMQP queue purged: %s', get_gather_queue_name())
         channel.queue_purge(queue=get_fetch_queue_name())
         log.info('AMQP queue purged: %s', get_fetch_queue_name())
-        return
-    if backend == 'redis':
-        connection.flushdb()
-        log.info('Redis database flushed')
+    elif backend == 'redis':
+        get_gather_consumer().queue_purge(queue=get_gather_queue_name())
+        get_fetch_consumer().queue_purge(queue=get_fetch_queue_name())
+        log.info('Redis queues cleared')
+    else:
+        raise Exception('Unhandled backend: %s', backend)
+
 
 def resubmit_jobs():
     '''
@@ -306,7 +309,7 @@ def gather_callback(channel, method, header, body):
                     publisher.close()
                     return False  # not sure the False does anything
 
-                log.debug('Received from plugin gather_stage: {0} objects (first: {1} last: {2})'.format(
+                log.debug('Received from plugin gather_stage, to send to fetch queue: {0} objects (first ho id: {1} last: {2})'.format(
                           len(harvest_object_ids), harvest_object_ids[:1], harvest_object_ids[-1:]))
                 for id in harvest_object_ids:
                     # Send the id to the fetch queue
@@ -372,8 +375,11 @@ def gather_stage(harvester, job):
     finally:
         job.gather_finished = datetime.datetime.utcnow()
         job.save()
-    log.debug('Received objects from plugin''s gather_stage (%d): %r',
-              len(harvest_object_ids or []), harvest_object_ids)
+    harvest_object_ids = harvest_object_ids or []
+    log.debug('Received from plugin gather_stage: {0} objects '
+              '(first ho id: {1} last: {2})'.format(
+        len(harvest_object_ids), harvest_object_ids[:1],
+        harvest_object_ids[-1:]))
 
     # Delete any stray harvest_objects not returned by
     # gather_stage() - they'd not be dealt with so would

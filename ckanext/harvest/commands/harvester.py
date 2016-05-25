@@ -63,6 +63,9 @@ class Harvester(CkanCommand):
       harvester fetch_consumer
         - starts the consumer for the fetching queue
 
+      harvester purge_queues
+        - removes all jobs from fetch and gather queue
+
       harvester [-j] [-o|-g|-p {id/guid}] [--segments={segments}] import [{source-id}]
         - perform the import stage with the last fetched objects, for a certain
           source or a single harvest object. Please note that no objects will
@@ -138,7 +141,7 @@ class Harvester(CkanCommand):
                 self.create_harvest_source()
             else:
                 self.show_harvest_source()
-        elif cmd == "rmsource":
+        elif cmd == 'rmsource':
             self.remove_harvest_source()
         elif cmd == 'clearsource':
             self.clear_harvest_source()
@@ -156,18 +159,25 @@ class Harvester(CkanCommand):
             self.run_test_harvest()
         elif cmd == 'gather_consumer':
             import logging
-            from ckanext.harvest.queue import get_gather_consumer
+            from ckanext.harvest.queue import (get_gather_consumer,
+                gather_callback, get_gather_queue_name)
             logging.getLogger('amqplib').setLevel(logging.INFO)
             consumer = get_gather_consumer()
             logging.getLogger('ckan.cli').info('Now going to wait on the gather queue...')
-            consumer.wait()
+            for method, header, body in consumer.consume(queue=get_gather_queue_name()):
+                gather_callback(consumer, method, header, body)
         elif cmd == 'fetch_consumer':
             import logging
             logging.getLogger('amqplib').setLevel(logging.INFO)
-            from ckanext.harvest.queue import get_fetch_consumer
+            from ckanext.harvest.queue import (get_fetch_consumer, fetch_callback,
+                get_fetch_queue_name)
             consumer = get_fetch_consumer()
             logging.getLogger('ckan.cli').info('Now going to wait on the fetch queue...')
-            consumer.wait()
+            for method, header, body in consumer.consume(queue=get_fetch_queue_name()):
+               fetch_callback(consumer, method, header, body)
+        elif cmd == 'purge_queues':
+            from ckanext.harvest.queue import purge_queues
+            purge_queues()
         elif cmd == 'initdb':
             self.initdb()
         elif cmd == 'import':
@@ -261,23 +271,29 @@ class Harvester(CkanCommand):
 
     def remove_harvest_source(self):
         if len(self.args) >= 2:
-            source_id = unicode(self.args[1])
+            source_id_or_name = unicode(self.args[1])
         else:
             print 'Please provide a source id'
             sys.exit(1)
-        context = {'model': model, 'user': self.admin_user['name'], 'session':model.Session}
-        get_action('harvest_source_delete')(context,{'id':source_id})
-        print 'Removed harvest source: %s' % source_id
+        context = {'model': model, 'session': model.Session,
+                   'user': self.admin_user['name']}
+        source = get_action('harvest_source_show')(
+            context, {'id': source_id_or_name})
+        get_action('harvest_source_delete')(context, {'id': source['id']})
+        print 'Removed harvest source: %s' % source_id_or_name
 
     def clear_harvest_source(self):
         if len(self.args) >= 2:
-            source_id = unicode(self.args[1])
+            source_id_or_name = unicode(self.args[1])
         else:
             print 'Please provide a source id'
             sys.exit(1)
-        context = {'model': model, 'user': self.admin_user['name'], 'session':model.Session}
-        get_action('harvest_source_clear')(context,{'id':source_id})
-        print 'Cleared harvest source: %s' % source_id
+        context = {'model': model, 'session': model.Session,
+                   'user': self.admin_user['name']}
+        source = get_action('harvest_source_show')(
+            context, {'id': source_id_or_name})
+        get_action('harvest_source_clear')(context, {'id': source['id']})
+        print 'Cleared harvest source: %s' % source_id_or_name
 
     def list_harvest_sources(self):
         if len(self.args) >= 2 and self.args[1] == 'all':
@@ -294,18 +310,22 @@ class Harvester(CkanCommand):
 
     def create_harvest_job(self):
         if len(self.args) >= 2:
-            source_id = unicode(self.args[1])
+            source_id_or_name = unicode(self.args[1])
         else:
-            print 'Please provide a source id'
+            print 'Please provide a source name or id'
             sys.exit(1)
+        context = {'model': model, 'session': model.Session,
+                   'user': self.admin_user['name']}
+        source = get_action('harvest_source_show')(
+            context, {'id': source_id_or_name})
 
         context = {'model': model,'session':model.Session, 'user': self.admin_user['name']}
         job = get_action('harvest_job_create')(
-                context, {'source_id': source_id, 'run': True})
+            context, {'source_id': source['id'], 'run': True})
 
         self.print_harvest_job(job)
         jobs = get_action('harvest_job_list')(context,{'status':u'New'})
-        self.print_there_are('harvest jobs', jobs, condition=u'New')
+        self.print_there_are('harvest job', jobs, condition=u'New')
 
         return job
 
