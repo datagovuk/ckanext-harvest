@@ -1,4 +1,5 @@
-import urllib2
+import requests
+import urllib3.contrib.pyopenssl
 
 from ckan.lib.base import c
 from ckan import model
@@ -31,17 +32,15 @@ class CKANHarvester(HarvesterBase):
         return '/api/%s/search' % self.api_version
 
     def _get_content(self, url):
-        http_request = urllib2.Request(
-            url = url,
-        )
-
         try:
             api_key = self.config.get('api_key',None)
+            headers = {}
             if api_key:
-                http_request.add_header('Authorization',api_key)
-            http_response = urllib2.urlopen(http_request)
+                headers['Authorization'] = api_key
+            urllib3.contrib.pyopenssl.inject_into_urllib3()
 
-            return http_response.read()
+            http_request = requests.get(url, headers=headers)
+            return http_request
         except Exception, e:
             raise e
 
@@ -159,8 +158,8 @@ class CKANHarvester(HarvesterBase):
                         log.info('No packages have been updated on the remote CKAN instance since the last harvest job')
                         return None
 
-                except urllib2.HTTPError,e:
-                    if e.getcode() == 400:
+                except HTTPError,e:
+                    if e.response.status_code == 400:
                         log.info('CKAN instance %s does not suport revision filtering' % base_url)
                         get_all_packages = True
                     else:
