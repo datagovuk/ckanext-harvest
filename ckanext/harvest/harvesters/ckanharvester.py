@@ -1,6 +1,7 @@
-import urllib2
+import requests
 import httplib
 import dateutil.parser
+from urllib3.contrib import pyopenssl
 
 from paste.deploy.converters import asbool
 
@@ -38,24 +39,26 @@ class CKANHarvester(DguHarvesterBase):
         return '/api/%d/search' % self.api_version
 
     def _get_content(self, url):
-        http_request = urllib2.Request(url=url)
 
+        headers = {}
         api_key = self.config.get('api_key', None)
         if api_key:
-            http_request.add_header('Authorization', api_key)
+            headers['Authorization'] = api_key
+
+        pyopenssl.inject_into_urllib3()
         try:
-            http_response = urllib2.urlopen(http_request)
-        except urllib2.HTTPError, e:
-            if e.getcode() == 404:
+            http_request = requests.get(url, headers=headers)
+        except HTTPError, e:
+            if e.response.status_code == 404:
                 raise ContentNotFoundError('HTTP error: %s' % e.code)
             else:
                 raise ContentFetchError('HTTP error: %s' % e.code)
-        except urllib2.URLError, e:
+        except URLError, e:
             raise ContentFetchError('URL error: %s' % e.reason)
         except httplib.HTTPException, e:
             raise ContentFetchError('HTTP Exception: %s' % e)
 
-        return http_response.read()
+        return http_request
 
     def _get_group(self, base_url, group_name):
         url = base_url + self._get_rest_api_offset() + '/group/' + munge_name(group_name)
