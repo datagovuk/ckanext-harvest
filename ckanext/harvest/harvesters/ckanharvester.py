@@ -606,9 +606,11 @@ class CKANHarvester(DguHarvesterBase):
             licence = None
             if not license_obj:
                 # license_id not known to this CKAN, so identify by title
+                # title can be None, but we need a string, which is why this
+                # isn't `package_dict.get('license_title', '')`
                 license_id, licence = \
                     dgu_helpers.get_licence_fields_from_free_text(
-                        package_dict.get('license_title', ''))
+                        package_dict.get('license_title') or '')
                 package_dict['license_id'] = license_id
                 if licence:
                     package_dict['extras']['licence'] = licence
