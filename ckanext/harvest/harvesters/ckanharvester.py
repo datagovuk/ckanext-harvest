@@ -58,7 +58,7 @@ class CKANHarvester(DguHarvesterBase):
         except httplib.HTTPException, e:
             raise ContentFetchError('HTTP Exception: %s' % e)
 
-        return http_request
+        return http_request.text
 
     def _get_group(self, base_url, group_name):
         url = base_url + self._get_rest_api_offset() + '/group/' + munge_name(group_name)
