@@ -48,15 +48,8 @@ class CKANHarvester(DguHarvesterBase):
         pyopenssl.inject_into_urllib3()
         try:
             http_request = requests.get(url, headers=headers)
-        except HTTPError, e:
-            if e.response.status_code == 404:
-                raise ContentNotFoundError('HTTP error: %s' % e.code)
-            else:
-                raise ContentFetchError('HTTP error: %s' % e.code)
-        except URLError, e:
-            raise ContentFetchError('URL error: %s' % e.reason)
-        except httplib.HTTPException, e:
-            raise ContentFetchError('HTTP Exception: %s' % e)
+        except requests.exceptions.RequestException as e:
+            raise ContentFetchError('Exception: %s' % e)
 
         return http_request.text
 
